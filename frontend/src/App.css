@@ -1,0 +1,12 @@
+nav a {
+  text-decoration: none;
+  color: #2563eb;
+}
+
+nav a.active {
+  font-weight: 700;
+}
+
+table {
+  font-size: 14px;
+}

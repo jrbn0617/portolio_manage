@@ -4,3 +4,7 @@
 node_modules/
 __pycache__/
 *.log
+venv/
+dist/
+*.egg-info/
+reference/
