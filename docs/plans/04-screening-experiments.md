@@ -26,7 +26,7 @@ top_n=20, 섹터당 최대 2종목, 유동시총가중(종목당 최대 30%), EB
 
 | # | 브랜치 | 아이디어 | 상태 | 결과 요약 |
 |---|---|---|---|---|
-| 1 | `experiment/01-composite-score` | 순차 스크리닝 → 통합 스코어(PEG랭크+모멘텀랭크 z-score 합산) | 예정 | - |
+| 1 | `experiment/01-composite-score` | 순차 스크리닝 → 통합 스코어(PEG랭크+모멘텀랭크 z-score 합산) | 완료 | 코스닥150 기준 베이스라인 대비 전 지표 악화(연변동성 36.7%→38.2%, MDD -44.6%→-49.0%, 샤프 0.85→0.73) — 기각 |
 | 2 | `experiment/02-relax-peg-positive` | PEG>0(=성장률>0) 강제조건 완화 | 예정 | - |
 | 3 | `experiment/03-sharpe-momentum` | 변동성조정 모멘텀(수익률÷변동성) | 예정 | - |
 | 4 | `experiment/04-blended-lookback` | 3/6/12개월 모멘텀 랭크 블렌딩 | 예정 | - |
