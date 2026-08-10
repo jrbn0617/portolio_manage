@@ -1,13 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.instrument import Instrument
 from app.models.monthly_fundamental import MonthlyFundamental
 from app.schemas.monthly_fundamental import (
+    MonthlyFundamentalBulkUploadResult,
     MonthlyFundamentalUpsert,
     MonthlyFundamentalWithTicker,
 )
+from app.services.monthly_fundamental_bulk_service import process_monthly_fundamental_bulk_upload
 
 router = APIRouter(prefix="/monthly-fundamentals", tags=["monthly-fundamentals"])
 
@@ -69,6 +71,15 @@ def upsert_monthly_fundamental(payload: MonthlyFundamentalUpsert, db: Session = 
         id=row.id, instrument_id=row.instrument_id, date=row.date, metric=row.metric, value=float(row.value),
         ticker=instrument.ticker, name=instrument.name,
     )
+
+
+@router.post("/bulk-upload", response_model=MonthlyFundamentalBulkUploadResult)
+async def bulk_upload_monthly_fundamentals(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    raw = await file.read()
+    try:
+        return process_monthly_fundamental_bulk_upload(db, file.filename or "upload.xlsx", raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"엑셀 파일을 읽을 수 없습니다: {exc}") from exc
 
 
 @router.delete("/{entry_id}", status_code=204)
