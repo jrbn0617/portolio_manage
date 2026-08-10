@@ -1,6 +1,6 @@
 # 알고리즘 #1 개요 — 쉬운 설명
 
-> 정확한 파라미터·수치는 [05-final-algorithm.md](./05-final-algorithm.md) 참고. 이 문서는 같은 내용을
+> 정확한 파라미터·수치는 [algorithm1-overview.md](./algorithm1-overview.md) 참고. 이 문서는 같은 내용을
 > 전문용어 없이 풀어 쓴 버전이다.
 
 ## 한 줄 요약
