@@ -227,6 +227,71 @@ def cap_weights(weights: dict[int, float], max_weight: float) -> dict[int, float
     return weights
 
 
+def cap_weights_with_groups(
+    weights: dict[int, float],
+    max_weight: float | None = None,
+    groups: dict[int, str] | None = None,
+    max_group_weight: float | None = None,
+    max_rounds: int = 50,
+) -> dict[int, float]:
+    """cap_weights를 종목캡+그룹캡(업종/섹터/산업 등) 동시 적용으로 확장한 버전.
+    한 라운드에 (1) 종목캡 초과분을 캡 안 걸린 종목에 비례 재분배 → (2) 그룹합계 초과분을
+    다른 그룹 종목에 비례 재분배, 순서로 처리하고 더 이상 변화가 없을 때까지 반복한다
+    (그룹 캡 재분배가 개별 종목을 다시 종목캡 위로 밀어올릴 수 있어 두 제약이 동시에
+    수렴할 때까지 번갈아 적용해야 함). groups가 None이거나 max_group_weight가 None이면
+    그룹캡은 건너뛰고 cap_weights와 동일하게 동작."""
+    weights = dict(weights)
+    n = len(weights)
+    if n == 0:
+        return {}
+
+    for _ in range(max_rounds):
+        changed = False
+
+        if max_weight is not None:
+            over = {iid: w for iid, w in weights.items() if w > max_weight + 1e-12}
+            if over:
+                if max_weight * n < 1.0 - 1e-9:
+                    return {iid: 1.0 / n for iid in weights}
+                changed = True
+                excess = sum(w - max_weight for w in over.values())
+                for iid in over:
+                    weights[iid] = max_weight
+                uncapped_ids = [iid for iid in weights if iid not in over]
+                uncapped_total = sum(weights[iid] for iid in uncapped_ids)
+                if uncapped_total <= 0:
+                    return {iid: 1.0 / n for iid in weights}
+                for iid in uncapped_ids:
+                    weights[iid] += excess * (weights[iid] / uncapped_total)
+
+        if groups is not None and max_group_weight is not None:
+            group_sums: dict[str, float] = {}
+            for iid, w in weights.items():
+                group_sums[groups.get(iid, "미분류")] = group_sums.get(groups.get(iid, "미분류"), 0.0) + w
+            over_groups = {g for g, s in group_sums.items() if s > max_group_weight + 1e-12}
+            if over_groups:
+                if max_group_weight * len(group_sums) < 1.0 - 1e-9:
+                    return {iid: 1.0 / n for iid in weights}
+                changed = True
+                excess = 0.0
+                for iid in weights:
+                    g = groups.get(iid, "미분류")
+                    if g in over_groups:
+                        old = weights[iid]
+                        weights[iid] = old * (max_group_weight / group_sums[g])
+                        excess += old - weights[iid]
+                under_ids = [iid for iid in weights if groups.get(iid, "미분류") not in over_groups]
+                under_total = sum(weights[iid] for iid in under_ids)
+                if under_total <= 0:
+                    return {iid: 1.0 / n for iid in weights}
+                for iid in under_ids:
+                    weights[iid] += excess * (weights[iid] / under_total)
+
+        if not changed:
+            break
+    return weights
+
+
 def compute_free_float_weights(
     db: Session,
     instrument_ids: list[int],
@@ -234,11 +299,15 @@ def compute_free_float_weights(
     warn: Logger | None = None,
     momentum: dict[int, float] | None = None,  # WeightFn 시그니처 통일용, 여기선 안 씀
     max_weight: float | None = None,
+    group_field: str | None = None,
+    max_group_weight: float | None = None,
 ) -> dict[int, float]:
     """보유종목의 유동주식시가총액(raw_close x 상장주식수 x 유동비율) 비례 가중치.
     데이터가 없는 종목은 동일가중 몫(1/n)을 그대로 배정하고, 나머지 예산을 시총
     비례로 나머지 종목에 분배한다(전부 실패하면 동일가중으로 폴백) — run_momentum_backtest의
-    weight_fn으로 사용. max_weight가 주어지면 종목당 비중 상한을 적용한다(cap_weights)."""
+    weight_fn으로 사용. max_weight가 주어지면 종목당 비중 상한을 적용한다. group_field(
+    Instrument의 "krx_sector"/"sector"/"industry" 등)와 max_group_weight를 함께 주면
+    같은 그룹(업종/섹터/산업) 합산 비중에도 상한을 적용한다(cap_weights_with_groups)."""
     warn = warn or (lambda msg: None)
     n = len(instrument_ids)
     if n == 0:
@@ -260,15 +329,22 @@ def compute_free_float_weights(
 
     if not caps:
         weights = {iid: equal_share for iid in instrument_ids}
-        return cap_weights(weights, max_weight) if max_weight is not None else weights
+    else:
+        reserved = len(missing) * equal_share
+        remaining_budget = 1.0 - reserved
+        total_cap = sum(caps.values())
+        weights = {iid: equal_share for iid in missing}
+        for iid, cap in caps.items():
+            weights[iid] = remaining_budget * (cap / total_cap)
 
-    reserved = len(missing) * equal_share
-    remaining_budget = 1.0 - reserved
-    total_cap = sum(caps.values())
-    weights = {iid: equal_share for iid in missing}
-    for iid, cap in caps.items():
-        weights[iid] = remaining_budget * (cap / total_cap)
-    return cap_weights(weights, max_weight) if max_weight is not None else weights
+    if max_weight is None and max_group_weight is None:
+        return weights
+
+    groups = None
+    if group_field is not None and max_group_weight is not None:
+        instruments = {i.id: i for i in db.query(Instrument).filter(Instrument.id.in_(instrument_ids)).all()}
+        groups = {iid: (getattr(instruments[iid], group_field) or "미분류") for iid in instrument_ids}
+    return cap_weights_with_groups(weights, max_weight=max_weight, groups=groups, max_group_weight=max_group_weight)
 
 
 def compute_inverse_vol_weights(
@@ -501,13 +577,105 @@ def _holding_value_path(
     return {**pre_path, **post_path}
 
 
+def _overnight_gap_ratio(db: Session, instrument_id: int, close_day: date, open_day: date) -> float | None:
+    """close_day 종가 대비 open_day 시가 비율(분할조정 기준 Price.close/Price.open —
+    DividendAdjustedPrice엔 시가가 없어서, 배당조정과 무관하게 근사적으로 동일하다고
+    가정하고 갭 비율만 이 테이블에서 구한다). 둘 중 하나라도 없으면 None."""
+    close_row = (
+        db.query(Price.close)
+        .filter(Price.instrument_id == instrument_id, Price.period == "D", Price.date == close_day)
+        .first()
+    )
+    open_row = (
+        db.query(Price.open)
+        .filter(Price.instrument_id == instrument_id, Price.period == "D", Price.date == open_day)
+        .first()
+    )
+    if not close_row or not open_row or open_row[0] is None or not close_row[0]:
+        return None
+    return float(open_row[0]) / float(close_row[0])
+
+
+def apply_stop_loss(
+    db: Session,
+    instrument_id: int,
+    value_path: dict[date, float],
+    trading_days: list[date],
+    stop_loss_pct: float,
+    execution: str = "close",
+) -> dict[date, float]:
+    """실험#6: period_start 대비 -stop_loss_pct 이하로 처음 떨어지는 거래일(T)부터
+    현금(0%수익) 보유로 남은 기간을 버틴다고 가정(남은 보유종목으로의 재배분은 하지
+    않음). threshold = 1 - stop_loss_pct.
+
+    execution="close"(기본): T의 종가 그 자체로 동결. execution="next_open"(실험#6
+    추가검증에서 더 나은 결과를 보인 방식): 다음 거래일(T+1)의 시가에 매도한다고
+    가정 — T까지는 원래(미실현) 가치배수를 그대로 쓰고, T+1부터
+    value_path[T] * (Price.open(T+1)/Price.close(T))로 동결(오버나잇 갭 반영,
+    `_overnight_gap_ratio`). T가 구간의 마지막 거래일이거나 갭 비율을 구할 가격
+    데이터가 없으면 close 방식으로 대체."""
+    threshold = 1.0 - stop_loss_pct
+    frozen: float | None = None
+    freeze_from_idx: int | None = None
+    result: dict[date, float] = {}
+
+    for i, d in enumerate(trading_days):
+        if frozen is not None and i >= freeze_from_idx:
+            result[d] = frozen
+            continue
+        v = value_path[d]
+        if frozen is None and v <= threshold:
+            if execution == "close" or i == len(trading_days) - 1:
+                frozen = v
+                freeze_from_idx = i
+                result[d] = v
+                continue
+            next_day = trading_days[i + 1]
+            gap = _overnight_gap_ratio(db, instrument_id, d, next_day)
+            frozen = v * gap if gap is not None else v
+            freeze_from_idx = i + 1
+            result[d] = v
+            continue
+        result[d] = v
+    return result
+
+
+def compute_regime_exposure(
+    db: Session,
+    as_of_date: date,
+    benchmark_ticker: str,
+    ma_window_days: int = 200,
+    bull_exposure: float = 1.0,
+    bear_exposure: float = 0.5,
+) -> float:
+    """실험#7: 유니버스 벤치마크 지수(예: KOSDAQ150) 종가가 장기 이동평균(기본
+    200거래일) 위/아래인지로 시장 레짐을 판정해 포트폴리오 전체 노출비중
+    (bull_exposure/bear_exposure)을 정한다. 이평 계산에 필요한 데이터가 부족하면
+    (백테스트 극초반, 벤치마크 지수 시세가 2019-12-02부터라 200거래일 이평은
+    2020-10경부터 계산 가능) 강세 레짐(bull_exposure)으로 간주."""
+    inst = db.query(Instrument).filter(Instrument.ticker == benchmark_ticker).first()
+    rows = (
+        db.query(Price.close)
+        .filter(Price.instrument_id == inst.id, Price.period == "D", Price.date <= as_of_date)
+        .order_by(Price.date.desc())
+        .limit(ma_window_days)
+        .all()
+    )
+    if len(rows) < ma_window_days:
+        return bull_exposure
+    closes = [float(r[0]) for r in rows]
+    ma = sum(closes) / len(closes)
+    return bull_exposure if closes[0] > ma else bear_exposure
+
+
 @dataclass
 class BacktestConfig:
     index_name: str = "KOSDAQ150"
     lookback_months: int = 12
     skip_months: int = 1
     top_n: int = 10
-    max_per_sector: int | None = None  # 섹터(krx_sector/sector)당 최대 편입종목수, None이면 제한 없음
+    max_per_sector: int | None = None  # 섹터당 최대 편입종목수, None이면 제한 없음
+    sector_count_field: str | None = None  # None이면 krx_sector/sector 폴백(기존 동작), 필드명 지정시 그 필드만 사용(예: "industry")
     start_date: date = date(2020, 1, 1)
     end_date: date = date(2020, 4, 30)
 
@@ -567,6 +735,7 @@ def _compute_metrics(nav_series: list[tuple[date, float]]) -> dict:
 
 ScreenFn = Callable[[Session, list, date], list]
 WeightFn = Callable[[Session, list, date, "Logger | None", dict], dict]
+ExposureFn = Callable[[Session, date], float]
 
 
 def run_momentum_backtest(
@@ -576,8 +745,14 @@ def run_momentum_backtest(
     on_info: Logger | None = None,
     screen_fn: "ScreenFn | None" = None,
     weight_fn: "WeightFn | None" = None,
+    exposure_fn: "ExposureFn | None" = None,
+    stop_loss_pct: float | None = None,
+    stop_loss_execution: str = "close",
 ) -> BacktestResult:
-    """screen_fn이 주어지면 반기 편입종목(resolve_universe) 이후, 모멘텀 랭킹 이전에
+    """실험#9: 실험6(월중 손절)과 실험7(시장 레짐 필터)을 동시에 적용해 조합 효과를
+    검증하기 위해 두 훅을 한 브랜치에 합쳤다 — screen_fn/weight_fn은 기존과 동일.
+
+    screen_fn이 주어지면 반기 편입종목(resolve_universe) 이후, 모멘텀 랭킹 이전에
     (db, universe, period_start) -> 통과한 instrument_id 리스트로 유니버스를 추가로
     좁힌다 — 펀더멘털 팩터 스크리닝을 모멘텀 랭킹과 조합할 때 사용
     (예: app/services/factor_screen_service.screen_by_ebitda_peg).
@@ -586,7 +761,20 @@ def run_momentum_backtest(
     {instrument_id: weight}로 최종 선정된 top_n 종목의 편입비중을 정한다 — 생략하면
     기존과 동일하게 동일가중. 유동주식시가총액/역변동성/모멘텀 비례 가중은
     app/services/backtest_service.compute_free_float_weights /
-    compute_inverse_vol_weights / compute_momentum_weights 참고."""
+    compute_inverse_vol_weights / compute_momentum_weights 참고.
+
+    exposure_fn이 주어지면(실험#7) 매 리밸런싱마다 (db, period_start) -> 노출비중
+    스칼라(0~1)를 구해 weight_fn이 정한 종목별 비중 전체에 곱한다(합이 1 미만이 되는
+    만큼은 현금 0%수익으로 남는다 — cash_weight로 명시 처리, 실험#7에서 발견한 버그
+    수정 반영). 시장 레짐에 따라 포트폴리오 전체 익스포저를 조절할 때 사용(예:
+    compute_regime_exposure).
+
+    stop_loss_pct가 주어지면(실험#6) 각 보유종목의 리밸런싱 구간 내 가치배수가
+    period_start 대비 -stop_loss_pct 이하로 떨어지는 첫 거래일부터 그 값을 동결한다
+    (apply_stop_loss) — 손절 후 현금(0%수익) 보유, 재배분 없음. 생략하면(None, 기본값)
+    손절 없이 기존과 동일하게 동작. stop_loss_execution="close"(기본)면 문턱을 넘은
+    그 날 종가로 즉시 동결, "next_open"이면 다음 거래일 시가(오버나잇 갭 반영)로
+    동결(실험#6 추가검증에서 더 나은 결과)."""
     warn = on_warning or (lambda msg: None)
     info = on_info or (lambda msg: None)
 
@@ -625,7 +813,10 @@ def run_momentum_backtest(
             for iid in ranked:
                 if len(holdings) >= config.top_n:
                     break
-                sector = ranked_instruments[iid].krx_sector or ranked_instruments[iid].sector or "미분류"
+                if config.sector_count_field is not None:
+                    sector = getattr(ranked_instruments[iid], config.sector_count_field) or "미분류"
+                else:
+                    sector = ranked_instruments[iid].krx_sector or ranked_instruments[iid].sector or "미분류"
                 if sector_count.get(sector, 0) >= config.max_per_sector:
                     continue
                 holdings.append(iid)
@@ -645,6 +836,9 @@ def run_momentum_backtest(
             if (weight_fn is not None and holdings)
             else {iid: 1.0 / len(holdings) for iid in holdings}
         )
+        if exposure_fn is not None and holdings:
+            exposure = exposure_fn(db, period_start)
+            weights_by_iid = {iid: w * exposure for iid, w in weights_by_iid.items()}
 
         rebalance_log.append(
             {
@@ -665,9 +859,17 @@ def run_momentum_backtest(
             iid: _holding_value_path(db, iid, period_start, trading_days, warn, info, warnings_log)
             for iid in holdings
         }
+        if stop_loss_pct is not None:
+            value_paths = {
+                iid: apply_stop_loss(db, iid, path, trading_days, stop_loss_pct, execution=stop_loss_execution)
+                for iid, path in value_paths.items()
+            }
+        # 편입비중 합이 1.0 미만이면(exposure_fn으로 노출비중을 줄인 경우) 나머지는
+        # 현금(배수 1.0, 무수익)으로 보유한다고 간주(실험#7에서 발견한 버그 수정).
+        cash_weight = max(0.0, 1.0 - sum(weights_by_iid.values()))
         period_base_nav = nav
         for day in trading_days[1:]:
-            multiplier = sum(weights_by_iid[iid] * value_paths[iid][day] for iid in holdings)
+            multiplier = cash_weight + sum(weights_by_iid[iid] * value_paths[iid][day] for iid in holdings)
             nav = period_base_nav * multiplier
             nav_series.append((day, nav))
 
