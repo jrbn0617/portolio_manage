@@ -674,7 +674,8 @@ class BacktestConfig:
     lookback_months: int = 12
     skip_months: int = 1
     top_n: int = 10
-    max_per_sector: int | None = None  # 섹터(krx_sector/sector)당 최대 편입종목수, None이면 제한 없음
+    max_per_sector: int | None = None  # 섹터당 최대 편입종목수, None이면 제한 없음
+    sector_count_field: str | None = None  # None이면 krx_sector/sector 폴백(기존 동작), 필드명 지정시 그 필드만 사용(예: "industry")
     start_date: date = date(2020, 1, 1)
     end_date: date = date(2020, 4, 30)
 
@@ -812,7 +813,10 @@ def run_momentum_backtest(
             for iid in ranked:
                 if len(holdings) >= config.top_n:
                     break
-                sector = ranked_instruments[iid].krx_sector or ranked_instruments[iid].sector or "미분류"
+                if config.sector_count_field is not None:
+                    sector = getattr(ranked_instruments[iid], config.sector_count_field) or "미분류"
+                else:
+                    sector = ranked_instruments[iid].krx_sector or ranked_instruments[iid].sector or "미분류"
                 if sector_count.get(sector, 0) >= config.max_per_sector:
                     continue
                 holdings.append(iid)

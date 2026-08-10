@@ -155,6 +155,7 @@ def main():
         index_name=args.index,
         top_n=args.top_n,
         max_per_sector=args.max_per_sector,
+        sector_count_field=group_field,
         start_date=args.start,
         end_date=args.end,
     )
