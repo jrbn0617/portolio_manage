@@ -1,18 +1,20 @@
-"""실험#10(섹터당 최대종목수 제한 제거 + 가중치 방식 비교) 백테스트 결과를
+"""실험#10/#11(가중치 방식 + 섹터캡 변형) 백테스트 결과를
 reference/(별첨 2) 백테스팅자료_회사명(예시).xlsx 포맷으로 출력한다.
 
 최종 채택안(실험#9: EBITDA PEG 스크리닝+모멘텀랭킹, 월중손절 -10%(익일시가체결),
-시장레짐필터(200일선, 약세시 50%))에서 "섹터당 최대 2종목" 제한만 제거한 뒤,
-가중치 방식 4종을 비교한다:
-  1) equal            — 동일가중
-  2) free_float        + group-field=krx_sector, max-group-weight=0.50  (업종 50%캡)
-  3) free_float        + group-field=sector,     max-group-weight=0.50  (섹터 50%캡)
-  4) free_float        + group-field=industry,   max-group-weight=0.50  (산업 50%캡)
+시장레짐필터(200일선, 약세시 50%))을 기반으로 섹터 관련 제약을 바꿔가며 비교한다.
+--max-per-sector로 카운트 기반 제한(기본값 None=제한없음, 실험#9와 같이 2를 주면
+"섹터당 최대 2종목" 유지)을, --group-field/--max-group-weight로 합산비중 기반 그룹캡을
+독립적으로 켜고 끌 수 있다:
+  실험#10: --max-per-sector 없음(제한 제거) + equal 또는 free_float+group-field(3종) — 기각
+  실험#11: --max-per-sector 2(유지) + free_float+group-field=sector,max-group-weight=0.50
+           (기존 섹터당2종목 캡에 동일섹터 합산 50%캡을 추가로 병행)
 2~4는 기존 종목당 30% 상한(--max-weight)도 그룹캡과 함께 병행 적용한다
 (app/services/backtest_service.cap_weights_with_groups).
 
 사용법: python scripts/export_weight_scheme_backtest_excel.py [--index KOSDAQ150]
-        [--top-n 20] [--weighting equal|free_float] [--group-field none|krx_sector|sector|industry]
+        [--top-n 20] [--max-per-sector 2|없음] [--weighting equal|free_float]
+        [--group-field none|krx_sector|sector|industry]
         [--max-weight 0.30] [--max-group-weight 0.50]
         [--stop-loss-pct 0.10] [--stop-loss-execution next_open]
         [--ma-window-days 200] [--bear-exposure 0.5]
@@ -68,6 +70,7 @@ def parse_args():
     p.add_argument("--start", type=date.fromisoformat, default=date(2020, 1, 1))
     p.add_argument("--end", type=date.fromisoformat, default=date(2026, 7, 31))
     p.add_argument("--top-n", type=int, default=20)
+    p.add_argument("--max-per-sector", type=int, default=None)
     p.add_argument("--screen-top-pct", type=float, default=0.5)
     p.add_argument("--min-sector-size", type=int, default=5)
     p.add_argument("--ttm-lag-days", type=int, default=90)
@@ -151,7 +154,7 @@ def main():
     config = BacktestConfig(
         index_name=args.index,
         top_n=args.top_n,
-        max_per_sector=None,
+        max_per_sector=args.max_per_sector,
         start_date=args.start,
         end_date=args.end,
     )
@@ -229,10 +232,11 @@ def main():
     }[args.weighting]
     group_suffix = f"_{GROUP_FIELD_LABEL[group_field]}그룹{args.max_group_weight:.0%}캡" if group_field is not None else ""
     cap_suffix = f"_종목당최대{args.max_weight:.0%}" if args.max_weight is not None else ""
+    sector_suffix = f"_섹터당{args.max_per_sector}개이하" if args.max_per_sector is not None else "_섹터캡없음"
     exec_label = "익일시가" if args.stop_loss_execution == "next_open" else "종가"
     asset_label = (
         f"{index_label} EBITDAPEG스크리닝모멘텀+월중손절{args.stop_loss_pct:.0%}({exec_label})+"
-        f"레짐필터(약세시{args.bear_exposure:.0%}비중)+섹터캡없음" + weighting_suffix + group_suffix + cap_suffix
+        f"레짐필터(약세시{args.bear_exposure:.0%}비중)" + sector_suffix + weighting_suffix + group_suffix + cap_suffix
     )
 
     wb = Workbook()
