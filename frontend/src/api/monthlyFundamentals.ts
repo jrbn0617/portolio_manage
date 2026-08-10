@@ -1,5 +1,9 @@
 import { apiClient } from "./client";
-import type { MonthlyFundamental, MonthlyFundamentalInput } from "../types";
+import type {
+  MonthlyFundamental,
+  MonthlyFundamentalBulkUploadResult,
+  MonthlyFundamentalInput,
+} from "../types";
 
 export async function fetchMonthlyFundamentals(params: {
   ticker?: string;
@@ -21,4 +25,15 @@ export async function upsertMonthlyFundamental(input: MonthlyFundamentalInput): 
 
 export async function deleteMonthlyFundamental(id: number): Promise<void> {
   await apiClient.delete(`/monthly-fundamentals/${id}`);
+}
+
+export async function bulkUploadMonthlyFundamentals(file: File): Promise<MonthlyFundamentalBulkUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const { data } = await apiClient.post<MonthlyFundamentalBulkUploadResult>(
+    "/monthly-fundamentals/bulk-upload",
+    formData,
+    { headers: { "Content-Type": "multipart/form-data" } }
+  );
+  return data;
 }

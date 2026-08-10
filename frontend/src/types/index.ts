@@ -121,3 +121,18 @@ export interface UploadResult {
   status: "success" | "partial" | "failed";
   errors: string[];
 }
+
+export interface MonthlyFundamentalBulkUploadMetricResult {
+  metric: string;
+  sheets: number;
+  rows: number;
+  unknown_tickers: number;
+}
+
+export interface MonthlyFundamentalBulkUploadResult {
+  status: "success" | "partial" | "failed";
+  file_name: string;
+  total_rows: number;
+  metrics: MonthlyFundamentalBulkUploadMetricResult[];
+  errors: string[];
+}

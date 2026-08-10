@@ -23,3 +23,18 @@ class MonthlyFundamentalUpsert(BaseModel):
     date: date
     metric: str
     value: float
+
+
+class MonthlyFundamentalBulkUploadMetricResult(BaseModel):
+    metric: str
+    sheets: int
+    rows: int
+    unknown_tickers: int
+
+
+class MonthlyFundamentalBulkUploadResult(BaseModel):
+    status: str
+    file_name: str
+    total_rows: int
+    metrics: list[MonthlyFundamentalBulkUploadMetricResult]
+    errors: list[str]
