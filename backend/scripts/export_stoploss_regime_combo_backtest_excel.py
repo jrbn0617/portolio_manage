@@ -12,9 +12,12 @@ compute_regime_exposure, run_momentum_backtest의 stop_loss_pct/exposure_fn 훅)
 
 사용법: python scripts/export_stoploss_regime_combo_backtest_excel.py [--index KOSDAQ150]
         [--top-n 20] [--max-per-sector 2] [--weighting free_float] [--max-weight 0.30]
-        [--stop-loss-pct 0.15] [--stop-loss-execution next_open]
+        [--stop-loss-pct 0.10] [--stop-loss-execution next_open]
         [--ma-window-days 200] [--bear-exposure 0.5]
         [--start 2020-01-01] [--end 2026-04-30] [--out ...]
+
+기본 손절선은 -10%(추가 민감도 검증 결과 4개 유니버스 중 3개에서 -15%/-20%보다 우수해 최종
+채택 — docs/plans/04-screening-experiments.md 실험#9 "추가 튜닝" 절 참고).
 """
 import argparse
 import sys
@@ -74,7 +77,7 @@ def parse_args():
     p.add_argument("--ttm-lag-days", type=int, default=90)
     p.add_argument("--consensus-lag-days", type=int, default=0)
     p.add_argument("--peg-min", type=float, default=0.0)
-    p.add_argument("--stop-loss-pct", type=float, default=0.15)
+    p.add_argument("--stop-loss-pct", type=float, default=0.10)
     p.add_argument("--stop-loss-execution", choices=["close", "next_open"], default="next_open")
     p.add_argument("--ma-window-days", type=int, default=200)
     p.add_argument("--bear-exposure", type=float, default=0.5)
