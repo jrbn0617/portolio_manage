@@ -70,3 +70,25 @@ backend/
 1. `backend/` FastAPI 서버 기동 후 Swagger UI(`/docs`)에서 API 동작 확인
 2. 샘플 가격/배당/거시지표 CSV 업로드 → DB에 정상 적재되는지 확인 (중복 업로드 시 upsert 확인)
 3. `frontend/`에서 업로드 화면 → 조회 화면까지 end-to-end 동작 확인
+
+## 알려진 이슈 / 개선 백로그 (미착수)
+
+### `dividend_adjusted_prices`의 D/M 계열 불일치 — M을 D에서 파생시키도록 변경 필요
+- **현상**: `period='M'`과 `period='D'`가 같은 날짜에 대해 미세하게(소수점 이하 수준) 값이 다름.
+  예: 삼성전자(005930) 2026-06-30 — M: 1035.8550, D: 1035.8701.
+- **원인**: `backend/app/services/derived_prices.py`의 `_recompute_dividend_adjusted_for_period`가
+  D/M을 독립적으로 각자 복리계산함. M은 월봉(그 달 마지막 거래일 종가)만 갖고 배당도 월 단위로
+  뭉쳐서(`(year, month)` 단위) 반영하는 반면, D는 일 단위로 정확한 배당락일에 반영. 매 단계
+  소수점 4자리 반올림(`round(idx_value, 4)`)이 누적되며 두 경로가 벌어짐.
+- **참고**: 원종가(`prices`)의 M봉은 이미 `recompute_monthly_bar`에서 D의 그 달 마지막 거래일
+  종가를 그대로 가져다 쓰는 방식(다운샘플링)이라 이 문제가 없음 — 배당조정가(`dividend_adjusted_prices`)의
+  M봉만 이 패턴을 안 따르고 독립 재계산하는 게 불일치 원인.
+- **제안**: M을 독립 복리계산하지 않고, D의 그 달 마지막 거래일 `adj_close` 값을 그대로 읽어와
+  M에 upsert하는 방식으로 변경(`recompute_monthly_bar`와 동일 패턴). `_recompute_dividend_adjusted_for_period`의
+  월단위 배당 lookup 분기(`d if period=="D" else (d.year, d.month)`)는 M 쪽에서 불필요해져 제거 가능.
+  호출부(`recompute_dividend_adjusted`)가 이미 D→M 순서로 호출하므로 구조 변경 없이 반영 가능.
+- **영향**: 전종목·전기간 M 배당조정가 재계산(force_full) 필요. `compute_momentum` 등 M을 쓰는
+  모든 계산(백테스트 엔진 전체)이 미세하게(소수점 이하 수준) 재현값이 바뀜 — 기존 실험 결론에는
+  영향 없음, 정밀도만 개선.
+- **발견 경위**: 2026-08-10, 삼성전자 BM차감 모멘텀 계산 중 CSV(M기준)와 즉석계산(D기준) 값이
+  미세하게 달라 발견. 알고리즘#2 마무리 후 진행 예정.
