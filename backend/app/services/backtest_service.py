@@ -227,6 +227,71 @@ def cap_weights(weights: dict[int, float], max_weight: float) -> dict[int, float
     return weights
 
 
+def cap_weights_with_groups(
+    weights: dict[int, float],
+    max_weight: float | None = None,
+    groups: dict[int, str] | None = None,
+    max_group_weight: float | None = None,
+    max_rounds: int = 50,
+) -> dict[int, float]:
+    """cap_weights를 종목캡+그룹캡(업종/섹터/산업 등) 동시 적용으로 확장한 버전.
+    한 라운드에 (1) 종목캡 초과분을 캡 안 걸린 종목에 비례 재분배 → (2) 그룹합계 초과분을
+    다른 그룹 종목에 비례 재분배, 순서로 처리하고 더 이상 변화가 없을 때까지 반복한다
+    (그룹 캡 재분배가 개별 종목을 다시 종목캡 위로 밀어올릴 수 있어 두 제약이 동시에
+    수렴할 때까지 번갈아 적용해야 함). groups가 None이거나 max_group_weight가 None이면
+    그룹캡은 건너뛰고 cap_weights와 동일하게 동작."""
+    weights = dict(weights)
+    n = len(weights)
+    if n == 0:
+        return {}
+
+    for _ in range(max_rounds):
+        changed = False
+
+        if max_weight is not None:
+            over = {iid: w for iid, w in weights.items() if w > max_weight + 1e-12}
+            if over:
+                if max_weight * n < 1.0 - 1e-9:
+                    return {iid: 1.0 / n for iid in weights}
+                changed = True
+                excess = sum(w - max_weight for w in over.values())
+                for iid in over:
+                    weights[iid] = max_weight
+                uncapped_ids = [iid for iid in weights if iid not in over]
+                uncapped_total = sum(weights[iid] for iid in uncapped_ids)
+                if uncapped_total <= 0:
+                    return {iid: 1.0 / n for iid in weights}
+                for iid in uncapped_ids:
+                    weights[iid] += excess * (weights[iid] / uncapped_total)
+
+        if groups is not None and max_group_weight is not None:
+            group_sums: dict[str, float] = {}
+            for iid, w in weights.items():
+                group_sums[groups.get(iid, "미분류")] = group_sums.get(groups.get(iid, "미분류"), 0.0) + w
+            over_groups = {g for g, s in group_sums.items() if s > max_group_weight + 1e-12}
+            if over_groups:
+                if max_group_weight * len(group_sums) < 1.0 - 1e-9:
+                    return {iid: 1.0 / n for iid in weights}
+                changed = True
+                excess = 0.0
+                for iid in weights:
+                    g = groups.get(iid, "미분류")
+                    if g in over_groups:
+                        old = weights[iid]
+                        weights[iid] = old * (max_group_weight / group_sums[g])
+                        excess += old - weights[iid]
+                under_ids = [iid for iid in weights if groups.get(iid, "미분류") not in over_groups]
+                under_total = sum(weights[iid] for iid in under_ids)
+                if under_total <= 0:
+                    return {iid: 1.0 / n for iid in weights}
+                for iid in under_ids:
+                    weights[iid] += excess * (weights[iid] / under_total)
+
+        if not changed:
+            break
+    return weights
+
+
 def compute_free_float_weights(
     db: Session,
     instrument_ids: list[int],
@@ -234,11 +299,15 @@ def compute_free_float_weights(
     warn: Logger | None = None,
     momentum: dict[int, float] | None = None,  # WeightFn 시그니처 통일용, 여기선 안 씀
     max_weight: float | None = None,
+    group_field: str | None = None,
+    max_group_weight: float | None = None,
 ) -> dict[int, float]:
     """보유종목의 유동주식시가총액(raw_close x 상장주식수 x 유동비율) 비례 가중치.
     데이터가 없는 종목은 동일가중 몫(1/n)을 그대로 배정하고, 나머지 예산을 시총
     비례로 나머지 종목에 분배한다(전부 실패하면 동일가중으로 폴백) — run_momentum_backtest의
-    weight_fn으로 사용. max_weight가 주어지면 종목당 비중 상한을 적용한다(cap_weights)."""
+    weight_fn으로 사용. max_weight가 주어지면 종목당 비중 상한을 적용한다. group_field(
+    Instrument의 "krx_sector"/"sector"/"industry" 등)와 max_group_weight를 함께 주면
+    같은 그룹(업종/섹터/산업) 합산 비중에도 상한을 적용한다(cap_weights_with_groups)."""
     warn = warn or (lambda msg: None)
     n = len(instrument_ids)
     if n == 0:
@@ -260,15 +329,22 @@ def compute_free_float_weights(
 
     if not caps:
         weights = {iid: equal_share for iid in instrument_ids}
-        return cap_weights(weights, max_weight) if max_weight is not None else weights
+    else:
+        reserved = len(missing) * equal_share
+        remaining_budget = 1.0 - reserved
+        total_cap = sum(caps.values())
+        weights = {iid: equal_share for iid in missing}
+        for iid, cap in caps.items():
+            weights[iid] = remaining_budget * (cap / total_cap)
 
-    reserved = len(missing) * equal_share
-    remaining_budget = 1.0 - reserved
-    total_cap = sum(caps.values())
-    weights = {iid: equal_share for iid in missing}
-    for iid, cap in caps.items():
-        weights[iid] = remaining_budget * (cap / total_cap)
-    return cap_weights(weights, max_weight) if max_weight is not None else weights
+    if max_weight is None and max_group_weight is None:
+        return weights
+
+    groups = None
+    if group_field is not None and max_group_weight is not None:
+        instruments = {i.id: i for i in db.query(Instrument).filter(Instrument.id.in_(instrument_ids)).all()}
+        groups = {iid: (getattr(instruments[iid], group_field) or "미분류") for iid in instrument_ids}
+    return cap_weights_with_groups(weights, max_weight=max_weight, groups=groups, max_group_weight=max_group_weight)
 
 
 def compute_inverse_vol_weights(
