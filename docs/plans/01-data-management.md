@@ -61,6 +61,26 @@ backend/
 - 데이터 업로드 화면: 데이터 타입 선택 → 파일 선택 → 미리보기 → 업로드 → 결과(성공/실패 건수) 확인
 - 데이터 조회 화면: 종목별 가격 추이 기본 차트, 배당/거시지표 조회
 
+## 월간 데이터 수집 체크리스트 (매월말)
+
+알고리즘#1(EBITDA PEG 스크리닝 + 유동시총가중)에 쓰이는 팩터/유동성 데이터. `monthly_fundamentals`
+EAV 테이블(`backend/app/models/monthly_fundamental.py`)에 `metric`으로 구분해 적재.
+
+| # | 항목 | Item Code | Unit | Base Date | DB metric | 수집 방식 |
+|---|---|---|---|---|---|---|
+| 1 | 유동주식비율 | S102060 | % | | `free_float_ratio` | 수동 (WISEfn/DataGuide, 구독 필요) |
+| 2 | EBITDA(TTM) | M123005.M | Local thou | NR.FY1 | `ebitda_ttm` | 수동 (WISEfn/DataGuide) |
+| 3 | EBITDA(Fwd.12M) | E123060.M | Local thou | | `ebitda_fwd_12m` | 수동 (WISEfn/DataGuide) |
+| 4 | EV/EBITDA(Fwd.12M) | E331060.M | X | | `ev_ebitda_fwd_12m` | 수동 (WISEfn/DataGuide) |
+| 5 | 상장주식수 | (KRX 공개데이터) | 주 | | `shares_outstanding_monthly` | **자동 가능** — pykrx(`stock.get_market_cap_by_date`)로 조회, `backend/.env`에 KRX_ID/KRX_PW 이미 설정됨 |
+
+1~4는 WISEfn/FnGuide DataGuide류 구독 데이터라 수동 다운로드·업로드가 필요하다(`scripts/load_factor_fundamentals.py`,
+`scripts/load_monthly_fundamentals.py`). 5(상장주식수)는 KRX 공개데이터라 `pykrx`로 자동 수집
+가능 — `scripts/load_index_memberships_pykrx.py`가 이미 같은 인증 패턴(`load_dotenv` → KRX
+로그인)을 쓰고 있어 재사용 가능. 2026-08-10 세션에서 삼성전자(005930) 상장주식수를 실제로
+조회해 정상 동작 확인함(`get_market_cap_by_date`가 시가총액/거래량/거래대금과 함께 상장주식수
+컬럼을 반환). 아직 매월 자동 수집 스크립트로 만들진 않음(요청 시 작성).
+
 ## 향후 확장 포인트 (지금 구현하지 않음)
 - pykrx/FinanceDataReader 기반 자동 수집 버튼
 - 스케줄러(cron 등)를 통한 주기적 자동 갱신
