@@ -7,15 +7,13 @@ monthly_fundamentals 테이블에 적재한다. WISEfn 수동 다운로드가 �
 (2025-12-27부터 KRX 정보데이터시스템이 로그인 필수로 전환됨 — data.krx.co.kr 가입 필요.
 load_index_memberships_pykrx.py와 동일 계정 재사용).
 
-기준일 결정: 인자 없이 실행하면 "오늘이 이번 달의 마지막 거래일인지"를 스스로 판단해서,
-맞으면 오늘 데이터를 수집하고 아니면 조용히 종료한다(cron이 "매월 마지막날"을 직접 지정할
-수 없어서 — 매일 월말 근처(예: 25~31일) 장마감 후 돌리면서 스크립트가 알아서 걸러내는
-방식). --date로 특정 날짜가 속한 달의 마지막 거래일을 직접 지정할 수 있다(백필용, 오늘이
-아니어도 무조건 실행).
+기준일 결정: 인자 없이 실행하면 "지난달의 마지막 거래일"을 자동으로 잡는다(매월 1일에
+cron으로 돌리는 걸 전제 — 그 시점엔 지난달 데이터가 이미 확정돼 있음). --date로 특정
+날짜가 속한 달의 마지막 거래일을 직접 지정할 수 있다(백필용).
 
 사용법:
-  python scripts/load_shares_outstanding_pykrx.py                    # 오늘이 월말 거래일일 때만 수집
-  python scripts/load_shares_outstanding_pykrx.py --date 2026-06-15  # 2026년 6월 마지막 거래일(백필)
+  python scripts/load_shares_outstanding_pykrx.py                    # 지난달 마지막 거래일
+  python scripts/load_shares_outstanding_pykrx.py --date 2026-06-15  # 2026년 6월 마지막 거래일
 """
 import argparse
 import datetime
@@ -64,10 +62,7 @@ def last_trading_day_of_month(year: int, month: int) -> datetime.date:
 
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument(
-        "--date", type=datetime.date.fromisoformat, default=None,
-        help="이 날짜가 속한 달의 마지막 거래일을 기준일로 강제 지정(백필용, 오늘 여부와 무관하게 실행)",
-    )
+    p.add_argument("--date", type=datetime.date.fromisoformat, default=None, help="이 날짜가 속한 달의 마지막 거래일을 기준일로 사용(기본: 지난달)")
     return p.parse_args()
 
 
@@ -75,16 +70,12 @@ def main():
     args = parse_args()
     if args.date is not None:
         target_year, target_month = args.date.year, args.date.month
-        as_of = last_trading_day_of_month(target_year, target_month)
     else:
         today = datetime.date.today()
-        as_of = last_trading_day_of_month(today.year, today.month)
-        if as_of != today:
-            print(f"오늘({today})은 {today.year}-{today.month:02d}의 마지막 거래일이 아닙니다"
-                  f"(마지막 거래일: {as_of}). 아무 작업 없이 종료.")
-            return
+        target_year, target_month = _shift_month(today.year, today.month, -1)
 
-    print(f"기준일: {as_of}")
+    as_of = last_trading_day_of_month(target_year, target_month)
+    print(f"기준일: {as_of} ({target_year}-{target_month:02d} 마지막 거래일)")
 
     df = stock.get_market_cap_by_ticker(as_of.strftime("%Y%m%d"), market="ALL")
     if "상장주식수" not in df.columns:
