@@ -82,7 +82,8 @@ def parse_args():
     p.add_argument("--bear-exposure", type=float, default=0.5)
     p.add_argument("--weighting", choices=["equal", "free_float"], default="free_float")
     p.add_argument("--group-field", choices=["none", "krx_sector", "sector", "industry"], default="none")
-    p.add_argument("--max-weight", type=float, default=0.30)
+    p.add_argument("--max-weight", type=float, default=0.25)
+    p.add_argument("--min-weight", type=float, default=None, help="이 비중 미만 종목은 편입 제외 후 잔여에 비례 재분배 (예: 0.01)")
     p.add_argument("--max-group-weight", type=float, default=0.50)
     p.add_argument("--out", default=None)
     return p.parse_args()
@@ -107,11 +108,13 @@ def build_timeseries_sheet(wb: Workbook, dates: list[date], mp_values: list[floa
 def build_rebalance_sheet(wb: Workbook, rebalances: list[dict], instruments_by_ticker: dict[str, Instrument], asset_label: str):
     ws = wb.create_sheet("리밸런싱발생내역")
 
+    # 비중 0인 종목은 빼고 컬럼을 만든다 — 최소비중 룰(--min-weight)로 탈락한 종목은
+    # holdings에는 남아 있지만 실제로는 편입되지 않은 것이라 0.0%로 찍히면 오해를 부른다.
     tickers: list[str] = []
     seen = set()
     for r in rebalances:
         for t in r["holdings"]:
-            if t not in seen:
+            if r["weights"].get(t) and t not in seen:
                 seen.add(t)
                 tickers.append(t)
 
@@ -137,6 +140,8 @@ def build_rebalance_sheet(wb: Workbook, rebalances: list[dict], instruments_by_t
     for i, r in enumerate(rebalances, start=4):
         ws.cell(row=i, column=1, value=r["date"]).number_format = "yyyy-mm-dd"
         for t in r["holdings"]:
+            if not r["weights"].get(t):
+                continue
             cell = ws.cell(row=i, column=col_of_ticker[t], value=r["weights"][t])
             cell.number_format = PCT_FMT
         ws.cell(row=i, column=reason_col, value=REBALANCE_REASON)
@@ -182,6 +187,7 @@ def main():
             max_weight=args.max_weight,
             group_field=group_field,
             max_group_weight=args.max_group_weight if group_field is not None else None,
+            min_weight=args.min_weight,
         )
     else:
         weight_fn = None
@@ -233,6 +239,7 @@ def main():
     }[args.weighting]
     group_suffix = f"_{GROUP_FIELD_LABEL[group_field]}그룹{args.max_group_weight:.0%}캡" if group_field is not None else ""
     cap_suffix = f"_종목당최대{args.max_weight:.0%}" if args.max_weight is not None else ""
+    cap_suffix += f"_최소{args.min_weight:.0%}미만제외" if args.min_weight is not None else ""
     sector_suffix = f"_섹터당{args.max_per_sector}개이하" if args.max_per_sector is not None else "_섹터캡없음"
     exec_label = "익일시가" if args.stop_loss_execution == "next_open" else "종가"
     asset_label = (

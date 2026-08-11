@@ -292,6 +292,47 @@ def cap_weights_with_groups(
     return weights
 
 
+def drop_below_min_weight(
+    weights: dict[int, float],
+    min_weight: float,
+    max_weight: float | None = None,
+    groups: dict[int, str] | None = None,
+    max_group_weight: float | None = None,
+    min_holdings: int = 2,
+    max_rounds: int = 20,
+) -> dict[int, float]:
+    """실험#14: 비중이 min_weight 미만인 종목을 편입에서 빼고 잔여 종목에 **원래 비중
+    비율대로** 재분배한다. 너무 작아서 실질적 기여도 없이 매매비용·체결부담만 만드는
+    자투리 편입을 없애는 규칙이다.
+
+    재분배로 특정 종목이 다시 종목캡/그룹캡을 넘을 수 있고, 캡 재적용이 다른 종목을
+    다시 min_weight 아래로 밀어낼 수도 있어(그룹캡은 초과 그룹의 비중을 깎는다)
+    **더 이상 탈락자가 없을 때까지 "제외 → 재분배 → 캡 재적용"을 반복한다.**
+
+    반환값은 입력과 같은 키를 유지하되 탈락 종목은 0.0이다 — run_momentum_backtest가
+    holdings 전체에 대해 weights를 조회하므로 키를 빼면 KeyError가 난다.
+    min_holdings 미만으로 줄어드는 제외는 수행하지 않는다."""
+    active = {iid: w for iid, w in weights.items() if w > 0}
+    for _ in range(max_rounds):
+        drop = [iid for iid, w in active.items() if w < min_weight - 1e-12]
+        if not drop or len(active) - len(drop) < min_holdings:
+            break
+        for iid in drop:
+            del active[iid]
+        total = sum(active.values())
+        if total <= 0:
+            break
+        active = {iid: w / total for iid, w in active.items()}
+        if max_weight is not None or max_group_weight is not None:
+            active = cap_weights_with_groups(
+                active,
+                max_weight=max_weight,
+                groups={iid: groups[iid] for iid in active} if groups else None,
+                max_group_weight=max_group_weight,
+            )
+    return {iid: active.get(iid, 0.0) for iid in weights}
+
+
 def compute_free_float_weights(
     db: Session,
     instrument_ids: list[int],
@@ -301,13 +342,16 @@ def compute_free_float_weights(
     max_weight: float | None = None,
     group_field: str | None = None,
     max_group_weight: float | None = None,
+    min_weight: float | None = None,
 ) -> dict[int, float]:
     """보유종목의 유동주식시가총액(raw_close x 상장주식수 x 유동비율) 비례 가중치.
     데이터가 없는 종목은 동일가중 몫(1/n)을 그대로 배정하고, 나머지 예산을 시총
     비례로 나머지 종목에 분배한다(전부 실패하면 동일가중으로 폴백) — run_momentum_backtest의
     weight_fn으로 사용. max_weight가 주어지면 종목당 비중 상한을 적용한다. group_field(
     Instrument의 "krx_sector"/"sector"/"industry" 등)와 max_group_weight를 함께 주면
-    같은 그룹(업종/섹터/산업) 합산 비중에도 상한을 적용한다(cap_weights_with_groups)."""
+    같은 그룹(업종/섹터/산업) 합산 비중에도 상한을 적용한다(cap_weights_with_groups).
+    min_weight가 주어지면 캡 적용 후 그 비중에 못 미치는 종목을 편입에서 빼고 잔여
+    종목에 비례 재분배한다(drop_below_min_weight) — 탈락 종목은 0.0으로 반환된다."""
     warn = warn or (lambda msg: None)
     n = len(instrument_ids)
     if n == 0:
@@ -337,14 +381,25 @@ def compute_free_float_weights(
         for iid, cap in caps.items():
             weights[iid] = remaining_budget * (cap / total_cap)
 
-    if max_weight is None and max_group_weight is None:
+    if max_weight is None and max_group_weight is None and min_weight is None:
         return weights
 
     groups = None
     if group_field is not None and max_group_weight is not None:
         instruments = {i.id: i for i in db.query(Instrument).filter(Instrument.id.in_(instrument_ids)).all()}
         groups = {iid: (getattr(instruments[iid], group_field) or "미분류") for iid in instrument_ids}
-    return cap_weights_with_groups(weights, max_weight=max_weight, groups=groups, max_group_weight=max_group_weight)
+    weights = cap_weights_with_groups(
+        weights, max_weight=max_weight, groups=groups, max_group_weight=max_group_weight
+    )
+    if min_weight is not None:
+        weights = drop_below_min_weight(
+            weights,
+            min_weight=min_weight,
+            max_weight=max_weight,
+            groups=groups,
+            max_group_weight=max_group_weight,
+        )
+    return weights
 
 
 def compute_inverse_vol_weights(
