@@ -51,6 +51,11 @@ DB가 계속 갱신되므로(`daily_update` 평일 16:00 등) 같은 스크립�
 | **`backtest_cap_x_stop.py`** | **최종안** + 6-4. 섹터캡 × 손절 | `섹터캡x손절_*.csv` |
 | `interaction_test.py` | 7. 상호작용 검증 (이중정렬 + FM 교차항) | `상호작용_이중정렬.csv` |
 
+실험 8(벤치마크 재정의)·9(레짐필터 기각)는 여기가 아니라
+[`backend/scripts/export_algorithm2_backtest_excel.py`](../scripts/export_algorithm2_backtest_excel.py)로
+돌렸다. 제출 포맷(별첨2) 출력을 겸하는 스크립트라 `scripts/` 쪽에 뒀다 —
+`--regime` 플래그로 레짐필터 on/off를 비교한다.
+
 ## discontinued_sector_rotation/ — 폐기된 섹터로테이션
 
 문서 `algorithm2-experiments.md` 0번 섹션. 세 차례 시도해 모두 실패한 경로다.
