@@ -416,7 +416,14 @@ def fetch_investor_trading(db, day: datetime.date, instruments_by_ticker: dict[s
 
 
 def fetch_short_selling(db, day: datetime.date, instruments_by_ticker: dict[str, int]) -> None:
-    """일별 공매도 거래량/거래대금을 적재한다 (잔고는 벌크 API가 없어 제외)."""
+    """일별 공매도 거래량/거래대금을 적재한다 (잔고는 벌크 API가 없어 제외).
+
+    전체 거래량/거래대금(비중의 분모)은 공매도 API의 "매수" 컬럼이 아니라
+    get_market_ohlcv_by_ticker에서 가져온다 — "매수"는 통상적인 거래량과 다른 값이라
+    (2026-07-31 삼성전자: 매수 92,838,492 vs 실제 거래량 58,478,873) 그대로 쓰면 비중이
+    과소계산되고, DataGuide 백필분(= 네이버/거래소 공시 거래량과 일치)과 기준이 어긋나
+    소스 전환 시점에 비중이 2배 튀는 단절이 생긴다. 비중도 API 값 대신 직접 계산한다.
+    """
     day_str = day.strftime("%Y%m%d")
     by_ticker: dict[str, dict] = {}
     for market in ("KOSPI", "KOSDAQ"):
@@ -424,21 +431,27 @@ def fetch_short_selling(db, day: datetime.date, instruments_by_ticker: dict[str,
         time.sleep(REQUEST_DELAY_SEC)
         val_df = stock.get_shorting_value_by_ticker(day_str, market=market)
         time.sleep(REQUEST_DELAY_SEC)
+        ohlcv_df = stock.get_market_ohlcv_by_ticker(day_str, market=market)
+        time.sleep(REQUEST_DELAY_SEC)
 
         for ticker, r in vol_df.iterrows():
             by_ticker.setdefault(ticker, {})["short_volume"] = int(r["공매도"])
-            by_ticker[ticker]["total_volume"] = int(r["매수"])
-            by_ticker[ticker]["volume_ratio"] = float(r["비중"])
         for ticker, r in val_df.iterrows():
             by_ticker.setdefault(ticker, {})["short_value"] = int(r["공매도"])
-            by_ticker[ticker]["total_value"] = int(r["매수"])
-            by_ticker[ticker]["value_ratio"] = float(r["비중"])
+        for ticker, r in ohlcv_df.iterrows():
+            entry = by_ticker.setdefault(ticker, {})
+            entry["total_volume"] = int(r["거래량"])
+            entry["total_value"] = int(r["거래대금"])
 
     rows = []
     for ticker, fields in by_ticker.items():
         instrument_id = instruments_by_ticker.get(ticker)
         if instrument_id is None:
             continue
+        sv, tv = fields.get("short_volume"), fields.get("total_volume")
+        sval, tval = fields.get("short_value"), fields.get("total_value")
+        fields["volume_ratio"] = round(sv / tv * 100, 4) if sv is not None and tv else None
+        fields["value_ratio"] = round(sval / tval * 100, 4) if sval is not None and tval else None
         rows.append(dict(instrument_id=instrument_id, date=day, **fields))
 
     for i in range(0, len(rows), BATCH_SIZE):
