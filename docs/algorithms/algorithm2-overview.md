@@ -41,8 +41,10 @@
 | 리밸런싱 | 20거래일 |
 | 거래비용 가정 | 왕복 0.30% |
 
-재현: scratchpad 스크립트 `backtest_cap_x_stop.py` (리포지토리 미포함, 1회성 분석 코드).
-운용 스크립트는 아직 만들지 않았다.
+재현: `backend/analysis/algorithm2/backtest_cap_x_stop.py`
+(실행법·스크립트 목록은 [`backend/analysis/README.md`](../../backend/analysis/README.md) 참고).
+**운용 스크립트는 아직 만들지 않았다** — 채택 시 `app/services/backtest_service.py` 엔진으로
+옮겨야 한다(현재 분석 코드는 월간 리밸런싱·수급필터를 자체 구현하고 있음).
 
 ## 4. 백테스트 성과 (2019-11-05 ~ 2026-08-10)
 

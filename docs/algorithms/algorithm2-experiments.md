@@ -2,8 +2,10 @@
 
 > 요약·확정 파라미터는 [algorithm2-overview.md](./algorithm2-overview.md) 참고.
 > 이 문서는 **실패한 시도까지 포함한 전체 경로**를 남긴다. 같은 길을 다시 파지 않기 위해서다.
-> 분석 스크립트는 전부 scratchpad 1회성 코드이며 리포지토리에 포함되지 않았다.
-> 산출 CSV는 `reference/` 아래(gitignore 대상)에 있다.
+> 분석 스크립트는 [`backend/analysis/`](../../backend/analysis/README.md)에 있고,
+> 실험번호 ↔ 스크립트 ↔ 산출 CSV 매핑은 그 README에 정리돼 있다.
+> 산출 CSV는 `reference/`(gitignore 대상)에 떨어지므로 다른 PC에서는 직접 실행해 다시 만든다.
+> DB가 계속 갱신되므로 재현 시 소수점이 다를 수 있다 — 아래 수치는 작성 시점 스냅샷이다.
 
 ## 0. 이 알고리즘 이전 — 폐기된 섹터로테이션 경로
 
