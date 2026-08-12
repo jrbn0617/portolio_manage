@@ -709,6 +709,30 @@ def _overnight_gap_ratio(db: Session, instrument_id: int, close_day: date, open_
     return float(open_row[0]) / float(close_row[0])
 
 
+def compute_stop_point(
+    db: Session,
+    instrument_id: int,
+    value_path: dict[date, float],
+    trading_days: list[date],
+    stop_loss_pct: float,
+    execution: str = "close",
+) -> tuple[int, float] | None:
+    """손절 발동 지점을 (동결 시작 인덱스, 동결 가치배수)로 반환. 안 걸리면 None.
+
+    실험#18에서 apply_stop_loss로부터 분리했다 — 재배분·지수대체 모드가 "언제 얼마에
+    팔렸는지"를 알아야 하는데 apply_stop_loss는 경로만 돌려주기 때문이다. 판정식과
+    체결 가정(close / next_open)은 apply_stop_loss와 동일하다."""
+    threshold = 1.0 - stop_loss_pct
+    for i, d in enumerate(trading_days):
+        v = value_path[d]
+        if v <= threshold:
+            if execution == "close" or i == len(trading_days) - 1:
+                return i, v
+            gap = _overnight_gap_ratio(db, instrument_id, d, trading_days[i + 1])
+            return i + 1, (v * gap if gap is not None else v)
+    return None
+
+
 def apply_stop_loss(
     db: Session,
     instrument_id: int,
@@ -751,6 +775,30 @@ def apply_stop_loss(
             continue
         result[d] = v
     return result
+
+
+def apply_stop_loss_with_growth(
+    value_path: dict[date, float],
+    trading_days: list[date],
+    stop: tuple[int, float] | None,
+    growth_series: dict[date, float],
+) -> dict[date, float]:
+    """실험#18 'index' 모드: 손절 후 현금(0%) 대신 growth_series(벤치마크 지수) 수익률을
+    따라간다. "판 돈으로 지수 ETF를 산다"에 해당한다. 청산 시점 지수 레벨을 기준으로
+    비율을 잡고, 지수 값이 없는 날은 직전 값으로 이월한다."""
+    if stop is None:
+        return dict(value_path)
+    idx, frozen = stop
+    base = growth_series.get(trading_days[idx])
+    out: dict[date, float] = {}
+    last = base
+    for i, d in enumerate(trading_days):
+        if i < idx:
+            out[d] = value_path[d]
+            continue
+        last = growth_series.get(d, last)
+        out[d] = frozen * (last / base) if (base and last) else frozen
+    return out
 
 
 def compute_regime_exposure(
@@ -800,6 +848,11 @@ class BacktestResult:
     rebalances: list[dict]
     warnings: list[str]
     metrics: dict
+    # 실험#18: 손절 통계. stop_loss_pct를 준 경우에만 채워진다.
+    #   positions/triggered = 전체 보유건수 / 그중 손절 발동 건수
+    #   idle_days/holding_days = 손절 후 현금으로 놀린 일수 / 전체 보유일수
+    #   frozen_weight = 리밸런싱 구간별 (손절된 종목 비중합)의 평균
+    stop_loss_stats: dict | None = None
 
 
 def _compute_metrics(nav_series: list[tuple[date, float]]) -> dict:
@@ -862,6 +915,8 @@ def run_momentum_backtest(
     exposure_fn: "ExposureFn | None" = None,
     stop_loss_pct: float | None = None,
     stop_loss_execution: str = "close",
+    stop_loss_mode: str = "cash",
+    post_stop_series: dict[date, float] | None = None,
 ) -> BacktestResult:
     """실험#9: 실험6(월중 손절)과 실험7(시장 레짐 필터)을 동시에 적용해 조합 효과를
     검증하기 위해 두 훅을 한 브랜치에 합쳤다 — screen_fn/weight_fn은 기존과 동일.
@@ -888,7 +943,14 @@ def run_momentum_backtest(
     (apply_stop_loss) — 손절 후 현금(0%수익) 보유, 재배분 없음. 생략하면(None, 기본값)
     손절 없이 기존과 동일하게 동작. stop_loss_execution="close"(기본)면 문턱을 넘은
     그 날 종가로 즉시 동결, "next_open"이면 다음 거래일 시가(오버나잇 갭 반영)로
-    동결(실험#6 추가검증에서 더 나은 결과)."""
+    동결(실험#6 추가검증에서 더 나은 결과).
+
+    stop_loss_mode(실험#18)는 손절한 자금을 남은 기간 어떻게 두는지를 정한다:
+      "cash"(기본, 기존 동작) — 현금 0% 수익으로 동결
+      "index" — post_stop_series(벤치마크 지수 종가)의 수익률을 따라간다("판 돈으로
+                지수 ETF를 산다"). post_stop_series가 없으면 cash와 같아진다
+      "redistribute" — 손절 대금을 잔여 보유종목에 현재 평가액 비례로 재배분한다.
+                재배분 후 비중이 시점마다 달라져 이 모드만 날짜별 순차 계산을 쓴다"""
     warn = on_warning or (lambda msg: None)
     info = on_info or (lambda msg: None)
 
@@ -905,6 +967,7 @@ def run_momentum_backtest(
     nav_series: list[tuple[date, float]] = [(rebalance_dates[0], nav)]
     rebalance_log: list[dict] = []
     warnings_log: list[str] = []
+    sl_stats = dict(positions=0, triggered=0, idle_days=0, holding_days=0, frozen_weight_sum=0.0, periods=0)
 
     for i in range(len(rebalance_dates) - 1):
         period_start = rebalance_dates[i]
@@ -984,19 +1047,84 @@ def run_momentum_backtest(
             iid: _holding_value_path(db, iid, period_start, trading_days, warn, info, warnings_log)
             for iid in holdings
         }
+        raw_paths = value_paths
+        stops: dict[int, tuple[int, float] | None] = {}
         if stop_loss_pct is not None:
-            value_paths = {
-                iid: apply_stop_loss(db, iid, path, trading_days, stop_loss_pct, execution=stop_loss_execution)
-                for iid, path in value_paths.items()
+            stops = {
+                iid: compute_stop_point(
+                    db, iid, raw_paths[iid], trading_days, stop_loss_pct, execution=stop_loss_execution
+                )
+                for iid in holdings
             }
+            sl_stats["positions"] += len(holdings)
+            sl_stats["holding_days"] += len(holdings) * (len(trading_days) - 1)
+            frozen_weight = 0.0
+            for iid, st in stops.items():
+                if st is not None:
+                    sl_stats["triggered"] += 1
+                    sl_stats["idle_days"] += len(trading_days) - 1 - st[0]
+                    frozen_weight += weights_by_iid[iid]
+            sl_stats["frozen_weight_sum"] += frozen_weight
+            sl_stats["periods"] += 1
+
+            if stop_loss_mode == "cash":
+                value_paths = {
+                    iid: apply_stop_loss(db, iid, path, trading_days, stop_loss_pct, execution=stop_loss_execution)
+                    for iid, path in raw_paths.items()
+                }
+            elif stop_loss_mode == "index":
+                value_paths = {
+                    iid: apply_stop_loss_with_growth(raw_paths[iid], trading_days, stops[iid], post_stop_series or {})
+                    for iid in holdings
+                }
         # 편입비중 합이 1.0 미만이면(exposure_fn으로 노출비중을 줄인 경우) 나머지는
         # 현금(배수 1.0, 무수익)으로 보유한다고 간주(실험#7에서 발견한 버그 수정).
         cash_weight = max(0.0, 1.0 - sum(weights_by_iid.values()))
         period_base_nav = nav
-        for day in trading_days[1:]:
-            multiplier = cash_weight + sum(weights_by_iid[iid] * value_paths[iid][day] for iid in holdings)
-            nav = period_base_nav * multiplier
-            nav_series.append((day, nav))
+
+        if stop_loss_pct is not None and stop_loss_mode == "redistribute":
+            # 손절 대금을 잔여 보유종목에 "현재 평가액 비례"로 재배분한다. 배분 후 각 종목의
+            # 보유단위(units)가 같은 비율로 커지므로 units만 스케일링하면 된다
+            # (배분액 a_j = P * u_j v_j / Σ u_k v_k → 추가단위 a_j/v_j = P * u_j / Σ u_k v_k).
+            # 잔여 종목이 하나도 없으면 배분할 곳이 없어 현금으로 남는다.
+            units = dict(weights_by_iid)
+            active = list(holdings)
+            freed_cash = 0.0
+            for i in range(1, len(trading_days)):
+                day = trading_days[i]
+                for iid in [j for j in active if stops[j] is not None and i >= stops[j][0]]:
+                    proceeds = units[iid] * stops[iid][1]
+                    units[iid] = 0.0
+                    active.remove(iid)
+                    base = sum(units[j] * raw_paths[j][day] for j in active)
+                    if base > 0:
+                        scale = 1.0 + proceeds / base
+                        for j in active:
+                            units[j] *= scale
+                    else:
+                        freed_cash += proceeds
+                multiplier = cash_weight + freed_cash + sum(units[j] * raw_paths[j][day] for j in active)
+                nav = period_base_nav * multiplier
+                nav_series.append((day, nav))
+        else:
+            for day in trading_days[1:]:
+                multiplier = cash_weight + sum(weights_by_iid[iid] * value_paths[iid][day] for iid in holdings)
+                nav = period_base_nav * multiplier
+                nav_series.append((day, nav))
 
     metrics = _compute_metrics(nav_series)
-    return BacktestResult(nav_series=nav_series, rebalances=rebalance_log, warnings=warnings_log, metrics=metrics)
+    stats = None
+    if stop_loss_pct is not None and sl_stats["positions"]:
+        stats = dict(
+            sl_stats,
+            trigger_rate=sl_stats["triggered"] / sl_stats["positions"],
+            idle_ratio=sl_stats["idle_days"] / max(sl_stats["holding_days"], 1),
+            avg_frozen_weight=sl_stats["frozen_weight_sum"] / max(sl_stats["periods"], 1),
+        )
+    return BacktestResult(
+        nav_series=nav_series,
+        rebalances=rebalance_log,
+        warnings=warnings_log,
+        metrics=metrics,
+        stop_loss_stats=stats,
+    )
