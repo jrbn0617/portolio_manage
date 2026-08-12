@@ -4,9 +4,14 @@ run_backtest.py 실행 중 "[⚠ 시계열단절] ... 미분류" 경고가 뜬 �
 사용자가 사유를 조사한 뒤 이 스크립트로 입력하면 corporate_action_events에
 저장되고, 이후 백테스트 재실행부터는 자동으로 반영된다(재입력 불필요).
 
+시계열이 안 끊긴 종목도 여기 등록할 수 있다 — 상장폐지 후 K-OTC 시세가 같은
+종목코드로 이어지면 경고가 안 뜨지만, 청산일을 직접 넣어주면 백테스트가 그 날짜에
+포지션을 정리한다(backtest_service._holding_value_path).
+
 사용법: python scripts/resolve_backtest_event.py <ticker>
 """
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +21,7 @@ from app.db.session import SessionLocal
 from app.models.corporate_action_event import CorporateActionEvent
 from app.models.dividend_adjusted_price import DividendAdjustedPrice
 from app.models.instrument import Instrument
+from app.models.price import Price
 
 
 def main(ticker: str):
@@ -42,6 +48,23 @@ def main(ticker: str):
 
     print(f"\n종목: {ticker} {inst.name}")
     print(f"마지막 데이터일: {last_date}")
+
+    # 상장폐지 후에도 K-OTC 시세가 같은 종목코드로 이어져 시계열이 안 끊기는 경우가 있다
+    # (150840 인트로메딕, 208340 파멥신). 그때는 마지막 데이터일이 아니라 실제로 팔 수
+    # 있었던 날 — 정리매매 시작일 — 을 청산일로 넣어야 한다.
+    raw = input(f"청산일(마지막 보유일) [Enter={last_date}]: ").strip()
+    if raw:
+        last_date = date.fromisoformat(raw)
+        close_on = (
+            db.query(Price.raw_close)
+            .filter(Price.instrument_id == inst.id, Price.period == "D", Price.date == last_date)
+            .first()
+        )
+        if close_on is None:
+            print(f"{last_date} 은(는) 이 종목의 거래일이 아닙니다. 다시 확인하세요.")
+            return
+        print(f"  {last_date} 실종가: {float(close_on[0]):,.0f}원")
+
     print("사유를 선택하세요: [1] 상장폐지  [2] 인수합병")
     choice = input("> ").strip()
 
