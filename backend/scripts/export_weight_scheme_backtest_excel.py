@@ -84,6 +84,12 @@ def parse_args():
     p.add_argument("--peg-min", type=float, default=0.0)
     p.add_argument("--stop-loss-pct", type=float, default=0.10)
     p.add_argument("--stop-loss-execution", choices=["close", "next_open"], default="next_open")
+    p.add_argument(
+        "--stop-loss-mode",
+        choices=["cash", "index", "redistribute"],
+        default="cash",
+        help="손절 자금 처리: cash=현금동결(기존), index=벤치마크 지수 수익률 추종, redistribute=잔여 종목에 비례 재배분",
+    )
     p.add_argument("--ma-window-days", type=int, default=200)
     p.add_argument("--bear-exposure", type=float, default=0.5)
     p.add_argument("--weighting", choices=["equal", "free_float"], default="free_float")
@@ -209,6 +215,18 @@ def main():
         exposure_fn=exposure_fn,
         stop_loss_pct=args.stop_loss_pct,
         stop_loss_execution=args.stop_loss_execution,
+        stop_loss_mode=args.stop_loss_mode,
+        post_stop_series=(
+            {
+                r.date: float(r.close)
+                for r in db.query(Price.date, Price.close)
+                .join(Instrument, Instrument.id == Price.instrument_id)
+                .filter(Instrument.ticker == benchmark_ticker, Price.period == "D")
+                .all()
+            }
+            if args.stop_loss_mode == "index"
+            else None
+        ),
     )
 
     if result.warnings:
@@ -251,6 +269,7 @@ def main():
     sector_suffix = f"_섹터당{args.max_per_sector}개이하" if args.max_per_sector is not None else "_섹터캡없음"
     screen_suffix = "_스크리닝없음" if args.no_screen else f"_PEG하위{args.screen_top_pct:.0%}"
     exec_label = "익일시가" if args.stop_loss_execution == "next_open" else "종가"
+    mode_suffix = {"cash": "", "index": "_손절후지수추종", "redistribute": "_손절후잔여재배분"}[args.stop_loss_mode]
     strategy_name = "모멘텀" if args.no_screen else "EBITDAPEG스크리닝모멘텀"
     asset_label = (
         f"{index_label} {strategy_name}+월중손절{args.stop_loss_pct:.0%}({exec_label})+"
@@ -260,6 +279,7 @@ def main():
         + group_suffix
         + cap_suffix
         + screen_suffix
+        + mode_suffix
     )
 
     wb = Workbook()
@@ -278,6 +298,13 @@ def main():
     rebased = list(zip(official_dates, mp_values))
     m = _compute_metrics(rebased)
     db.close()
+
+    if result.stop_loss_stats:
+        s = result.stop_loss_stats
+        print(
+            f"\n손절 통계: 발동 {s['triggered']}/{s['positions']}건 ({s['trigger_rate']:.1%})  "
+            f"현금동결 일수비중 {s['idle_ratio']:.1%}  구간평균 동결비중 {s['avg_frozen_weight']:.1%}"
+        )
 
     print(f"\n저장 완료: {out_path}")
     print(f"  시계열: {len(official_dates)}행 ({official_dates[0]} ~ {official_dates[-1]})")
