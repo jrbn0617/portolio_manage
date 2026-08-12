@@ -72,6 +72,12 @@ def parse_args():
     p.add_argument("--top-n", type=int, default=20)
     p.add_argument("--max-per-sector", type=int, default=None)
     p.add_argument("--screen-top-pct", type=float, default=0.5)
+    p.add_argument(
+        "--no-screen",
+        action="store_true",
+        help="EBITDA PEG 스크리닝을 아예 끈다(순수 모멘텀 대조군). "
+        "--screen-top-pct 1.0 은 '싼 하위 100%'일 뿐 성장률<=0·컨센서스 없음 탈락은 그대로라 대조군이 못 된다",
+    )
     p.add_argument("--min-sector-size", type=int, default=5)
     p.add_argument("--ttm-lag-days", type=int, default=90)
     p.add_argument("--consensus-lag-days", type=int, default=0)
@@ -173,7 +179,9 @@ def main():
     )
 
     db = SessionLocal()
-    screen_fn = partial(screen_by_ebitda_peg, config=screen_config, warn=print, info=lambda m: None)
+    screen_fn = (
+        None if args.no_screen else partial(screen_by_ebitda_peg, config=screen_config, warn=print, info=lambda m: None)
+    )
     exposure_fn = partial(
         compute_regime_exposure,
         benchmark_ticker=benchmark_ticker,
@@ -241,10 +249,17 @@ def main():
     cap_suffix = f"_종목당최대{args.max_weight:.0%}" if args.max_weight is not None else ""
     cap_suffix += f"_최소{args.min_weight:.0%}미만제외" if args.min_weight is not None else ""
     sector_suffix = f"_섹터당{args.max_per_sector}개이하" if args.max_per_sector is not None else "_섹터캡없음"
+    screen_suffix = "_스크리닝없음" if args.no_screen else f"_PEG하위{args.screen_top_pct:.0%}"
     exec_label = "익일시가" if args.stop_loss_execution == "next_open" else "종가"
+    strategy_name = "모멘텀" if args.no_screen else "EBITDAPEG스크리닝모멘텀"
     asset_label = (
-        f"{index_label} EBITDAPEG스크리닝모멘텀+월중손절{args.stop_loss_pct:.0%}({exec_label})+"
-        f"레짐필터(약세시{args.bear_exposure:.0%}비중)" + sector_suffix + weighting_suffix + group_suffix + cap_suffix
+        f"{index_label} {strategy_name}+월중손절{args.stop_loss_pct:.0%}({exec_label})+"
+        f"레짐필터(약세시{args.bear_exposure:.0%}비중)"
+        + sector_suffix
+        + weighting_suffix
+        + group_suffix
+        + cap_suffix
+        + screen_suffix
     )
 
     wb = Workbook()
