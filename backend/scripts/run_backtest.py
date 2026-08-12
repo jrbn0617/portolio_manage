@@ -39,6 +39,12 @@ def parse_args():
     p.add_argument("--top-n", type=int, default=10)
     p.add_argument("--lookback-months", type=int, default=12)
     p.add_argument("--skip-months", type=int, default=1)
+    p.add_argument(
+        "--halt-lookback-days",
+        type=int,
+        default=10,
+        help="리밸런싱일 직전 이 거래일수 동안 종가가 동일하면 거래정지로 보고 후보에서 제외 (0이면 필터 끔)",
+    )
     p.add_argument("--json", default=None, help="결과를 JSON으로 저장할 경로")
     return p.parse_args()
 
@@ -52,6 +58,7 @@ def main():
         top_n=args.top_n,
         start_date=args.start,
         end_date=args.end,
+        halt_lookback_days=args.halt_lookback_days or None,
     )
 
     db = SessionLocal()

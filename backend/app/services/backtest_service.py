@@ -7,6 +7,9 @@
 `corporate_action_events`에 등록된 분류를 따르고, 없으면 경고만 남기고
 마지막 가치로 동결한 채 계속 진행한다 — 사유는 resolve_backtest_event.py로
 별도 입력한다.
+
+시계열이 끊기지 않고 **값만 동결되는** 거래정지는 위 경로로 안 잡혀서, 리밸런싱
+시점마다 find_halted_instruments로 후보에서 걸러낸다(BacktestConfig.halt_lookback_days).
 """
 import calendar
 from dataclasses import dataclass
@@ -155,6 +158,55 @@ def find_series_break(db: Session, instrument_id: int, period_start: date, perio
     if last_date is None or last_date >= period_end:
         return None
     return last_date
+
+
+def find_halted_instruments(
+    db: Session,
+    instrument_ids: list[int],
+    as_of_date: date,
+    lookback_days: int = 10,
+) -> set[int]:
+    """as_of_date까지 최근 lookback_days 거래일 동안 종가가 한 번도 안 움직인 종목 집합.
+
+    거래정지 중인 종목은 시세가 안 끊기고 정지 직전 기준가가 매일 그대로 복제 적재된다
+    (예: 052670 제일바이오는 2023-07-21~2026-02-06 623거래일을 2,080원으로 채우다가
+    1,500:1 병합 재상장일에 실질 -80%가 한 번에 터졌다). 시계열이 살아있으니
+    find_series_break는 발동하지 않고, 모멘텀은 정확히 0%로 계산되며, volume이 NULL이라
+    거래대금 필터로도 안 걸러진다 — 결국 "살 수 없는 종목"이 후보에 남는다.
+
+    전종목 스캔은 scripts/check_price_anomalies.py 참고. 2026-08 기준 89종목이
+    동결 상태이고 그중 80종목이 아직 지수 편입 상태로 남아 있었다.
+
+    거래정지가 아닌데도 걸리는 건 스팩(기업인수목적회사)이다 — 합병 전까지 공모가
+    근처에서 시세가 거의 안 움직인다. 이것도 후보에서 빼는 게 맞다: 하락장에서
+    "0% 모멘텀"이 상위권으로 올라와 랭킹을 오염시킨다.
+    """
+    if not instrument_ids or lookback_days < 2:
+        return set()
+
+    # 연휴(설·추석)까지 감안해 넉넉히 잡은 뒤 뒤에서 lookback_days개만 쓴다.
+    window = get_trading_days(db, as_of_date - timedelta(days=lookback_days * 3 + 15), as_of_date)
+    if len(window) < lookback_days:
+        return set()
+    window_start = window[-lookback_days]
+
+    rows = (
+        db.query(
+            Price.instrument_id,
+            func.count(func.distinct(Price.close)).label("n_distinct"),
+            func.count(Price.id).label("n_rows"),
+        )
+        .filter(
+            Price.instrument_id.in_(instrument_ids),
+            Price.period == "D",
+            Price.date.between(window_start, as_of_date),
+        )
+        .group_by(Price.instrument_id)
+        .all()
+    )
+    # n_rows 조건: 신규상장 등으로 창을 다 못 채운 종목을 정지로 오인하지 않기 위함.
+    # 데이터가 아예 끊긴 경우는 여기가 아니라 find_series_break가 처리한다.
+    return {r.instrument_id for r in rows if r.n_distinct == 1 and r.n_rows >= lookback_days}
 
 
 def get_corporate_action_event(db: Session, instrument_id: int) -> CorporateActionEvent | None:
@@ -589,6 +641,13 @@ def _holding_value_path(
     adj_values = _daily_adj_close_map(db, instrument_id, period_start, period_end)
     break_date = find_series_break(db, instrument_id, period_start, period_end)
 
+    event = get_corporate_action_event(db, instrument_id)
+    if event is not None and period_start <= event.last_data_date <= period_end:
+        # 등록된 청산일이 시계열 단절보다 우선한다. 상장폐지 후 K-OTC 시세가 같은
+        # 종목코드로 이어지는 경우(150840 인트로메딕, 208340 파멥신) 데이터가 안 끊겨서
+        # find_series_break는 None을 주지만, 실제로는 정리매매 때 팔고 끝난 포지션이다.
+        break_date = event.last_data_date if break_date is None else min(break_date, event.last_data_date)
+
     if break_date is None:
         return _ratio_path(adj_values, period_start, trading_days)
 
@@ -598,7 +657,6 @@ def _holding_value_path(
     multiplier_at_break = pre_path.get(break_date, 1.0)
 
     inst = db.get(Instrument, instrument_id)
-    event = get_corporate_action_event(db, instrument_id)
     orig_raw = _raw_close_on(db, instrument_id, break_date)
 
     if event is None:
@@ -731,6 +789,7 @@ class BacktestConfig:
     top_n: int = 10
     max_per_sector: int | None = None  # 섹터당 최대 편입종목수, None이면 제한 없음
     sector_count_field: str | None = None  # None이면 krx_sector/sector 폴백(기존 동작), 필드명 지정시 그 필드만 사용(예: "industry")
+    halt_lookback_days: int | None = 10  # 리밸런싱일 직전 이 거래일수 동안 종가가 동일하면 거래정지로 보고 후보에서 제외. None이면 필터 끔
     start_date: date = date(2020, 1, 1)
     end_date: date = date(2020, 4, 30)
 
@@ -852,6 +911,17 @@ def run_momentum_backtest(
         period_end = rebalance_dates[i + 1]
 
         universe = resolve_universe(db, config.index_name, period_start)
+        if config.halt_lookback_days:
+            halted = find_halted_instruments(db, universe, period_start, config.halt_lookback_days)
+            if halted:
+                universe = [iid for iid in universe if iid not in halted]
+                halted_insts = db.query(Instrument).filter(Instrument.id.in_(halted)).all()
+                names = ", ".join(f"{x.ticker}({x.name})" for x in halted_insts[:8])
+                more = f" 외 {len(halted_insts) - 8}종목" if len(halted_insts) > 8 else ""
+                info(
+                    f"{period_start} 가격동결 {len(halted)}종목 후보 제외 "
+                    f"(직전 {config.halt_lookback_days}거래일 종가 동일 — 거래정지·스팩): {names}{more}"
+                )
         if screen_fn is not None:
             universe = screen_fn(db, universe, period_start)
         momentum = compute_momentum(
