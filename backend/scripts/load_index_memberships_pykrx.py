@@ -23,6 +23,7 @@ from pykrx import stock  # noqa: E402  (KRX_ID/KRX_PW가 os.environ에 있어야
 from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
+from app.services.instrument_rules import filter_common  # noqa: E402
 from app.services.upload_service import _upsert_index_membership  # noqa: E402
 
 REQUEST_DELAY_SEC = 1
@@ -59,7 +60,7 @@ def _find_index_ticker(market: str, name: str) -> str:
 
 def load_market_snapshot(db, instruments_by_ticker: dict[str, int], as_of: datetime.date):
     for market in ("KOSPI", "KOSDAQ"):
-        tickers = stock.get_market_ticker_list(as_of.strftime("%Y%m%d"), market=market)
+        tickers = filter_common(stock.get_market_ticker_list(as_of.strftime("%Y%m%d"), market=market))
         print(f"{market} {as_of}: {len(tickers)}개 종목")
         for ticker in tickers:
             row = {"ticker": ticker, "index_name": market, "as_of_date": as_of}
@@ -71,7 +72,7 @@ def load_market_snapshot(db, instruments_by_ticker: dict[str, int], as_of: datet
 
 def load_index_history(db, instruments_by_ticker: dict[str, int], index_name: str, index_ticker: str, dates: list[datetime.date]):
     for d in dates:
-        members = stock.get_index_portfolio_deposit_file(index_ticker, d.strftime("%Y%m%d"), alternative=True)
+        members = filter_common(stock.get_index_portfolio_deposit_file(index_ticker, d.strftime("%Y%m%d"), alternative=True))
         print(f"{index_name} {d}: {len(members)}개 종목")
         for ticker in members:
             row = {"ticker": ticker, "index_name": index_name, "as_of_date": d}

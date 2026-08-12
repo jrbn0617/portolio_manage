@@ -33,7 +33,8 @@ from pykrx import stock  # noqa: E402  (KRX_ID/KRX_PW가 os.environ에 있어야
 from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.index_membership import IndexMembership  # noqa: E402,F401
-from app.models.instrument import Instrument  # noqa: E402
+from app.models.instrument import Instrument
+from app.services.instrument_rules import filter_common  # noqa: E402
 from app.models.investor_trading import InvestorTrading  # noqa: E402
 from app.models.market_holiday import MarketHoliday  # noqa: E402
 from app.models.price import Price  # noqa: E402
@@ -297,7 +298,7 @@ def sync_shares_outstanding(db, today: datetime.date, instruments_by_ticker: dic
 def sync_index_memberships(db, today: datetime.date, instruments_by_ticker: dict[str, int]) -> None:
     """KOSPI/KOSDAQ 시장구분은 매일, KOSPI200/KOSDAQ150은 반기 시점 데이터가 없을 때만 갱신한다."""
     for market in ("KOSPI", "KOSDAQ"):
-        tickers = stock.get_market_ticker_list(today.strftime("%Y%m%d"), market=market)
+        tickers = filter_common(stock.get_market_ticker_list(today.strftime("%Y%m%d"), market=market))
         for ticker in tickers:
             if ticker not in instruments_by_ticker:
                 continue
@@ -332,7 +333,7 @@ def sync_index_memberships(db, today: datetime.date, instruments_by_ticker: dict
             if code is None:
                 print(f"  {index_name} 지수코드를 찾지 못함 — 건너뜀")
                 continue
-            members = stock.get_index_portfolio_deposit_file(code, as_of.strftime("%Y%m%d"), alternative=True)
+            members = filter_common(stock.get_index_portfolio_deposit_file(code, as_of.strftime("%Y%m%d"), alternative=True))
             for ticker in members:
                 if ticker not in instruments_by_ticker:
                     continue
