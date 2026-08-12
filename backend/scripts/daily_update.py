@@ -34,7 +34,7 @@ from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.index_membership import IndexMembership  # noqa: E402,F401
 from app.models.instrument import Instrument
-from app.services.instrument_rules import filter_common  # noqa: E402
+from app.services.instrument_rules import filter_common, is_preferred  # noqa: E402
 from app.models.investor_trading import InvestorTrading  # noqa: E402
 from app.models.market_holiday import MarketHoliday  # noqa: E402
 from app.models.price import Price  # noqa: E402
@@ -114,6 +114,8 @@ def fetch_day(db, day: datetime.date, instruments_by_ticker: dict[str, int]) -> 
             continue
 
         for ticker, r in df.iterrows():
+            if is_preferred(ticker):
+                continue  # 우선주는 적재하지 않는다 (CLAUDE.md "우선주" 절)
             close = float(r["종가"])
             if close == 0:
                 continue  # 거래정지 등으로 시세가 없는 종목

@@ -7,6 +7,10 @@
 `999999`처럼 끝자리가 0이 아니지만 우선주도 아닌 쓰레기 티커는 --include-junk를 줘야
 지운다. 기본값으로는 건드리지 않는다.
 
+**대상은 `asset_type='stock'`뿐이다.** 끝자리 규칙은 보통주/우선주 판별용이라 ETF·리츠·지수에
+적용하면 안 된다 — 예전엔 `asset_type <> 'index'`로 잡고 있어서 ETF를 적재하는 순간
+끝자리가 0이 아닌 ETF가 삭제될 수 있었다.
+
 instruments를 지우기 전에 자식 테이블부터 지운다(FK). 되돌릴 수 없으니 --dry-run으로
 먼저 확인할 것.
 
@@ -46,7 +50,7 @@ def target_ids(db, include_junk: bool):
     rows = db.execute(
         text(
             """select id, ticker, name from instruments
-               where coalesce(asset_type,'') <> 'index' and right(ticker, 1) <> '0'
+               where asset_type = 'stock' and right(ticker, 1) <> '0'
                order by ticker"""
         )
     ).fetchall()
@@ -100,7 +104,7 @@ def main(dry_run: bool, include_junk: bool):
     print(f"  {'instruments':26s} {r.rowcount:>10,}행 삭제")
 
     left = db.execute(
-        text("select count(*) from instruments where coalesce(asset_type,'')<>'index' and right(ticker,1)<>'0'")
+        text("select count(*) from instruments where asset_type='stock' and right(ticker,1)<>'0'")
     ).scalar()
     print(f"\n완료. 남은 끝자리≠0 종목: {left}개 (JUNK 제외분)")
     db.close()
