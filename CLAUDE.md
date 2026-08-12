@@ -123,9 +123,19 @@ pykrx는 **매일/매월 신규 데이터 자동 수집**(`daily_update.py`, `re
 ## 여러 세션이 동시에 작업할 때
 
 - **DB는 세션 간 공유된다.** 대량 적재·변환(백필, 정규화)은 한 세션에서만 실행한다.
-  cron 배치(평일 16:00 `daily_update`, 16:30 `load_dividends_seibro`, 17:00
-  `refresh_short_selling`, 매월 1일 06:00 `load_shares_outstanding_pykrx`)와 겹치지 않게
-  주의한다. 실행 이력은 `batch_runs` 테이블에서 확인.
+  아래 cron 배치와 겹치지 않게 주의한다. 실행 이력은 `batch_runs` 테이블에서 확인.
+
+  | 시각 | 배치 | 대상 |
+  |---|---|---|
+  | 평일 16:00 | `daily_update` | 주식 시세·수급·지수편입·업종 |
+  | 평일 16:30 | `load_dividends_seibro` | 주식 배당 |
+  | 평일 17:00 | `refresh_short_selling` | 공매도 |
+  | 평일 17:30 | `refresh_etf_prices` | **ETF 시세** (거래일당 KRX 1회) |
+  | 평일 18:00 | `load_etf_dividends_seibro` | **ETF 분배금** (최근 7일 재조회) |
+  | 매월 1일 06:00 | `load_shares_outstanding_pykrx` | 상장주식수 |
+
+  **ETF 가격이 분배금보다 먼저 돌아야 한다** — 분배금 배치는 `instruments`에 없는 ETF를
+  건너뛰는데, 신규 상장 ETF 등록은 가격 배치가 한다.
 - **브랜치를 나눈다.** `experiment/NN-slug`, `data/slug` 등으로 분리하고 main 직접 커밋은 피한다.
 - **scratchpad는 세션 간 공유되지 않는다.** 재사용할 분석 스크립트는 리포지토리로 옮긴다.
 - `reference/` 는 gitignore 대상이라 산출 CSV·엑셀은 다른 PC로 넘어가지 않는다.
