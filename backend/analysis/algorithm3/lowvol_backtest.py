@@ -49,7 +49,8 @@ LIQ_DROP = 0.20           # 하위 20% 제외
 COST = 0.0030             # 왕복
 REBAL_MONTHS = (3, 6, 9, 12)
 
-START = "2018-12-01"
+START = "2018-12-01"          # 신호 계산용 로딩 시작 (백테스트 시작이 아님)
+HOLDOUT_START = "2020-01-01"  # 이 날짜 이전 **성과**는 홀드아웃 — CLAUDE.md "홀드아웃" 절 참고
 UNIVERSES = [("코스닥150", "KOSDAQ150"), ("코스피200", "KOSPI200"),
              ("코스피전체", "KOSPI"), ("코스닥전체", "KOSDAQ")]
 OUT_DIR = REPO_DIR / "reference"
@@ -96,8 +97,16 @@ col_ix = {c: i for i, c in enumerate(adj.columns)}
 month_last = {}
 for i, d in enumerate(days):
     month_last[(d.year, d.month)] = i
-rebal = sorted(i for (y, m), i in month_last.items()
-               if m in REBAL_MONTHS and i >= IVOL_WINDOW + 5 and i < len(days) - 1)
+# 홀드아웃 경계는 **성과 측정 구간**에 적용한다(NAV를 HOLDOUT_START 이후로 자른다).
+# 포트폴리오 형성은 그 직전 분기말에서 시작해야 한다 — 형성일까지 2020년 이후로 밀면
+# 첫 리밸런싱이 2020-03-31(코로나 저점 8일 뒤)이 되어 폭락 구간이 표본에서 빠지고,
+# 그것만으로 MDD가 -39.5% -> -17.1%로 바뀌어 판정이 통째로 뒤집힌다.
+# 신호 계산에 2020년 이전 가격을 쓰는 것은 홀드아웃 소비가 아니다(모든 백테스트가
+# 첫 형성일에 lookback을 필요로 한다). 소비되는 것은 "성과를 잰 구간"뿐이다.
+_all = sorted(i for (y, m), i in month_last.items()
+              if m in REBAL_MONTHS and i >= IVOL_WINDOW + 5 and i < len(days) - 1)
+_seed = [i for i in _all if days[i] < pd.Timestamp(HOLDOUT_START)]
+rebal = ([_seed[-1]] if _seed else []) + [i for i in _all if days[i] >= pd.Timestamp(HOLDOUT_START)]
 print(f"리밸런싱 {len(rebal)}회 ({days[rebal[0]].date()} ~ {days[rebal[-1]].date()})\n")
 
 
@@ -197,8 +206,10 @@ def run(index_name):
             dates.append(days[j])
         prev = w
 
-    return (pd.Series(navs, index=dates), np.mean(turns), np.median(n_picks),
-            np.mean(hhis), pd.DataFrame(holdings))
+    nav = pd.Series(navs, index=dates)
+    nav = nav[nav.index >= pd.Timestamp(HOLDOUT_START)]   # 성과 측정은 홀드아웃 이후만
+    nav = nav / nav.iloc[0]
+    return nav, np.mean(turns), np.median(n_picks), np.mean(hhis), pd.DataFrame(holdings)
 
 
 def met(s):

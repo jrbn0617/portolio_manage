@@ -34,7 +34,8 @@ from app.db.session import SessionLocal  # noqa: E402
 IVOL_WINDOW, IVOL_MIN_OBS = 60, 45
 LIQ_WINDOW, LIQ_DROP = 60, 0.20
 N_Q = 5
-START = "2018-12-01"
+START = "2018-12-01"          # 신호 계산용 로딩 시작
+HOLDOUT_START = "2020-01-01"  # 이 날짜 이전 **성과**는 홀드아웃 — CLAUDE.md "홀드아웃" 절 참고
 REBAL_MONTHS = (3, 6, 9, 12)
 UNIVERSES = [("코스닥150", "KOSDAQ150"), ("코스피200", "KOSPI200"),
              ("코스피전체", "KOSPI"), ("코스닥전체", "KOSDAQ")]
@@ -86,8 +87,13 @@ days = list(adj.index)
 month_last = {}
 for i, d in enumerate(days):
     month_last[(d.year, d.month)] = i
-form = sorted(i for (y, m), i in month_last.items()
+# 홀드아웃은 **수익률을 재는 구간**에 걸린다. 형성일이 2019-12-30이어도 forward 구간이
+# 2020년 안에 있으면 소비되는 것은 2020년뿐이다. 형성일까지 2020년 이후로 밀면 첫 관측이
+# 2020-03-31(코로나 저점 직후)이 되어 표본이 유리한 쪽으로 잘린다.
+_all = sorted(i for (y, m), i in month_last.items()
               if m in REBAL_MONTHS and i >= IVOL_WINDOW + 5 and i < len(days) - 1)
+_seed = [i for i in _all if days[i] < pd.Timestamp(HOLDOUT_START)]
+form = ([_seed[-1]] if _seed else []) + [i for i in _all if days[i] >= pd.Timestamp(HOLDOUT_START)]
 
 
 def regime_of(d):
