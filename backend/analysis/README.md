@@ -71,6 +71,22 @@ DB가 계속 갱신되므로(`daily_update` 평일 16:00 등) 같은 스크립�
 
 ---
 
+## algorithm3/ — 저변동·복권형 회피
+
+문서: [`docs/algorithms/algorithm3-prereg.md`](../../docs/algorithms/algorithm3-prereg.md)(선등록),
+[`algorithm3-experiments.md`](../../docs/algorithms/algorithm3-experiments.md)(실행 결과)
+
+**선등록 방식이라 실행 순서가 정해져 있다.** 확정 파라미터는 `lowvol_backtest.py` 상단에
+있고, **결과를 보고 바꾸지 않는다.** 2015-07~2019-12 홀드아웃은 백필 도착 후를 위해
+아껴둔 상태다.
+
+| 스크립트 | 실험 | 산출 |
+|---|---|---|
+| `lowvol_backtest.py` | 1. 확정안 4개 유니버스 — **기각**(부호 갈림) | `알고리즘3_저변동_*.csv` |
+| `lowvol_side_predictions.py` | 2. 부수예측 P1~P4 (IVOL 5분위 스프레드) | `알고리즘3_부수예측.csv` |
+
+---
+
 ## 알려진 문제
 
 - **보일러플레이트 중복이 심하다.** 스크립트마다 DB 로딩·피벗·Newey-West·유니버스 해석을
