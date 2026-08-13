@@ -9,6 +9,7 @@
 거래비용은 증권거래세(매도 0.20%) + 위탁수수료(양방향 각 0.015%)로 계산한다
 (app.services.backtest_service.TransactionCost). 손절 동결도 매도로 보고 비용을 문다.
 """
+import argparse
 import sys
 from pathlib import Path
 
@@ -24,8 +25,23 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.services.backtest_service import TransactionCost  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
-START = "2019-01-01"
-HOLDOUT_START = "2020-01-01"  # 이 날짜 이전 성과는 봉인 — CLAUDE.md "홀드아웃" 절
+_ap = argparse.ArgumentParser()
+_ap.add_argument("--data-start", default="2019-01-01",
+                 help="가격·수급 로딩 시작일. 신호 lookback을 덮어야 한다(기본 2019-01-01)")
+_ap.add_argument("--perf-start", default="2020-01-01",
+                 help="성과 측정 시작일. 이 날짜로 잘라 1.0으로 리베이스한다")
+_ap.add_argument("--perf-end", default=None, help="성과 측정 종료일(포함). 생략하면 끝까지")
+_ap.add_argument("--only-confirmed", action="store_true",
+                 help="확정안(케이산업2종목 x 손절10%%) 한 조합만 실행. 홀드아웃 검증용 — "
+                      "6칸을 다 돌려 그중 좋은 것을 고르는 일을 막는다")
+_ap.add_argument("--label", default=None, help="출력 제목에 붙일 꼬리표")
+ARGS = _ap.parse_args()
+
+START = ARGS.data_start
+# 성과 구간 경계. 기본값은 홀드아웃 봉인선(2020-01-01) — CLAUDE.md "홀드아웃" 절.
+# 표본 외 검증에서는 이 값을 앞당겨 봉인 구간을 연다(선등록 문서 필수).
+HOLDOUT_START = ARGS.perf_start
+PERF_END = ARGS.perf_end
 SKIP, MOM_N = 21, 126
 HOLD, TOP_N = 20, 20
 FLOW_WINDOW, FLOW_KEEP = 60, 0.40
@@ -34,6 +50,9 @@ OUT_DIR = REPO_DIR / "reference"
 
 CAPS = [("제약없음", None, None), ("케이산업2종목", "krx_sector", 2), ("팩셋섹터5종목", "sector", 5)]
 STOPS = [("손절없음", None), ("손절10%", 0.10)]
+if ARGS.only_confirmed:
+    CAPS = [("케이산업2종목", "krx_sector", 2)]
+    STOPS = [("손절10%", 0.10)]
 
 db = SessionLocal()
 ALL = """
@@ -181,6 +200,8 @@ def clip_holdout(s):
     밀려 코로나 폭락이 표본에서 통째로 빠진다 — 실측으로 판정이 뒤집힌 적이 있다.
     """
     cut = s.loc[s.index >= HOLDOUT_START]
+    if PERF_END:
+        cut = cut.loc[cut.index <= PERF_END]
     return cut / cut.iloc[0]
 
 
@@ -206,8 +227,29 @@ for _, r in res.iterrows():
     print(f"{r.섹터캡:14s} {r.손절:8s} {r.CAGR:>+8.2%} {r.변동성:>8.1%} {r.MDD:>8.1%} "
           f"{r.Sharpe:>7.3f} {r.회전율*100:>4.0f}% {r.발동비율*100:>5.1f}% {r.최종:>6.2f}x")
 
-print("\n손절 도입 효과 (손절없음 -> 손절10%)")
-for cname, _, _ in CAPS:
+# 벤치마크 — 코스피200:코스닥150 50:50 constant-mix (일간수익률 동일가중 합성).
+# 유니버스가 두 지수의 합집합이므로 한쪽 지수만 쓰면 알파가 과대/과소평가된다
+# (methodology.md 1.6절 — 알고리즘 #2에서 실제로 두 번 틀렸던 지점).
+_bm_days = curves[list(curves)[0]].index
+_bm_raw = pivot("""select p.date, p.instrument_id, p.close::float value from prices p
+ join instruments i on i.id=p.instrument_id
+ where i.ticker in ('KOSPI200','KOSDAQ150') and p.period='D' and p.date>=:s""", {"s": START})
+_bm_ret = _bm_raw.reindex(_bm_days).ffill().pct_change().mean(axis=1)
+bm_nav = (1.0 + _bm_ret.fillna(0.0)).cumprod()
+bm_c, bm_v, bm_mdd, bm_sh = met(bm_nav)
+print(f"\n벤치마크 (코스피200:코스닥150 50:50 constant-mix)")
+print(f"  CAGR {bm_c:+.2%}  변동성 {bm_v:.1%}  MDD {bm_mdd:.1%}  Sharpe {bm_sh:.3f}")
+_conf = res[(res.섹터캡 == "케이산업2종목") & (res.손절 == "손절10%")]
+if len(_conf):
+    r = _conf.iloc[0]
+    print(f"\n=== 확정안 vs 벤치마크 ===")
+    print(f"  P1 샤프  {r.Sharpe:.3f} vs {bm_sh:.3f} → {'O 충족' if r.Sharpe > bm_sh else 'X 미충족'}")
+    print(f"  P2 MDD   {r.MDD:.1%} vs {bm_mdd:.1%} → {'O 충족' if r.MDD > bm_mdd else 'X 미충족'}")
+    print(f"  (부기) CAGR {r.CAGR:+.2%} vs {bm_c:+.2%}")
+
+if len(STOPS) > 1:
+    print("\n손절 도입 효과 (손절없음 -> 손절10%)")
+for cname, _, _ in (CAPS if len(STOPS) > 1 else []):
     a = res[(res.섹터캡 == cname) & (res.손절 == "손절없음")].iloc[0]
     b = res[(res.섹터캡 == cname) & (res.손절 == "손절10%")].iloc[0]
     print(f"  {cname:14s} CAGR {a.CAGR:+.2%} -> {b.CAGR:+.2%} ({b.CAGR-a.CAGR:+.2%}p) | "
