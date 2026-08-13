@@ -12,6 +12,7 @@
 시점마다 find_halted_instruments로 후보에서 걸러낸다(BacktestConfig.halt_lookback_days).
 """
 import calendar
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable
@@ -830,6 +831,38 @@ def compute_regime_exposure(
 
 
 @dataclass
+class TransactionCost:
+    """거래비용 — 매수·매도가 비대칭이라 한 쪽으로 뭉뚱그리지 않는다.
+
+    한국 주식은 **증권거래세가 매도에만** 붙고(코스피는 농특세 포함, 코스닥은 거래세만),
+    위탁수수료는 매수·매도 양쪽에 붙는다. 그래서 왕복 비용은
+    `2 x commission + sell_tax` 이며, 회전율 1회전에 이 값이 통째로 나가는 게 아니라
+    매도분에 `sell_tax + commission`, 매수분에 `commission` 이 각각 나간다.
+
+    ETF는 증권거래세가 없어 매도도 수수료만 든다(stop_loss_mode="index" 에서만 쓰임).
+    """
+
+    sell_tax: float = 0.0020      # 증권거래세(+농특세)
+    commission: float = 0.00015   # 위탁수수료 (매수·매도 각각)
+
+    @property
+    def buy_rate(self) -> float:
+        return self.commission
+
+    @property
+    def sell_rate(self) -> float:
+        return self.sell_tax + self.commission
+
+    @property
+    def etf_sell_rate(self) -> float:
+        return self.commission
+
+    @property
+    def round_trip(self) -> float:
+        return self.buy_rate + self.sell_rate
+
+
+@dataclass
 class BacktestConfig:
     index_name: str = "KOSDAQ150"
     lookback_months: int = 12
@@ -853,6 +886,11 @@ class BacktestResult:
     #   idle_days/holding_days = 손절 후 현금으로 놀린 일수 / 전체 보유일수
     #   frozen_weight = 리밸런싱 구간별 (손절된 종목 비중합)의 평균
     stop_loss_stats: dict | None = None
+    # cost를 준 경우에만 채워진다.
+    #   rebalance_cost/stop_cost = 리밸런싱 매매분 / 손절 청산분에서 나간 누적 비용(NAV 대비 배수)
+    #   avg_turnover = 리밸런싱 1회당 평균 단방향 회전율
+    #   drag = 비용이 없었을 때 대비 최종 NAV 손실률
+    cost_stats: dict | None = None
 
 
 def _compute_metrics(nav_series: list[tuple[date, float]]) -> dict:
@@ -917,6 +955,9 @@ def run_momentum_backtest(
     stop_loss_execution: str = "close",
     stop_loss_mode: str = "cash",
     post_stop_series: dict[date, float] | None = None,
+    idle_mode: str = "cash",
+    idle_series: dict[date, float] | None = None,
+    cost: "TransactionCost | None" = None,
 ) -> BacktestResult:
     """실험#9: 실험6(월중 손절)과 실험7(시장 레짐 필터)을 동시에 적용해 조합 효과를
     검증하기 위해 두 훅을 한 브랜치에 합쳤다 — screen_fn/weight_fn은 기존과 동일.
@@ -950,7 +991,27 @@ def run_momentum_backtest(
       "index" — post_stop_series(벤치마크 지수 종가)의 수익률을 따라간다("판 돈으로
                 지수 ETF를 산다"). post_stop_series가 없으면 cash와 같아진다
       "redistribute" — 손절 대금을 잔여 보유종목에 현재 평가액 비례로 재배분한다.
-                재배분 후 비중이 시점마다 달라져 이 모드만 날짜별 순차 계산을 쓴다"""
+                재배분 후 비중이 시점마다 달라져 이 모드만 날짜별 순차 계산을 쓴다
+
+    idle_mode(실험#19)는 **exposure_fn이 남긴 미투자분**(레짐 축소분)을 어떻게 두는지를
+    정한다. stop_loss_mode가 손절 뭉치를 다루는 것과 달리 이쪽은 시장 레짐 뭉치다:
+      "cash"(기본, 기존 동작) — 현금 0% 수익
+      "index" — idle_series(지수 ETF 배당조정 종가)의 수익률을 따라간다
+                idle_series가 없으면 cash와 같아진다
+
+    두 뭉치가 같은 ETF로 가는 경우(stop_loss_mode="index" + idle_mode="index")를 위해
+    리밸런싱 시 ETF 비용은 **목표 ETF 비중과 직전 구간 종료 ETF 비중을 상계한 차액**에만
+    물린다 — 계속 보유할 몫을 팔았다 사는 왕복 수수료를 물리지 않기 위함이다.
+
+    cost(TransactionCost)를 주면 거래비용을 차감한다. 생략하면(None, 기본값) 비용 0으로
+    기존과 완전히 동일하게 동작한다. 비용이 나가는 지점은 두 군데다:
+
+      1. 리밸런싱 — **직전 구간 종료 시점의 실제 비중**과 신규 목표비중의 차이로
+         매도분·매수분을 따로 구해 각각 sell_rate/buy_rate를 물린다. 목표비중끼리
+         비교하면(기존 스크립트 방식) 보유 중 발생한 가격 드리프트와 손절 청산이
+         빠져서 회전율이 왜곡된다.
+      2. 손절 — 동결은 곧 매도이므로 청산 시점부터의 가치배수에 매도비용을 반영한다.
+         "index"/"redistribute" 모드는 대금을 다시 사들이므로 매수비용도 함께 문다."""
     warn = on_warning or (lambda msg: None)
     info = on_info or (lambda msg: None)
 
@@ -968,6 +1029,20 @@ def run_momentum_backtest(
     rebalance_log: list[dict] = []
     warnings_log: list[str] = []
     sl_stats = dict(positions=0, triggered=0, idle_days=0, holding_days=0, frozen_weight_sum=0.0, periods=0)
+    # 거래비용 회계 — prev_end_*는 "직전 구간 마지막 날의 실제 보유비중"이다.
+    # 손절로 청산된 종목은 현금(또는 index 모드의 지수 ETF)으로 넘어가 있으므로
+    # 종목 비중에서 빠진다. 그래야 다음 리밸런싱에서 재매수분이 제대로 잡힌다.
+    prev_end_weights: dict[int, float] = {}
+    prev_end_etf = 0.0
+    cost_stats = dict(rebalance_cost=0.0, stop_cost=0.0, turnover_sum=0.0, rebalances=0)
+
+    # 실험#19 — 미투자분을 담을 지수 ETF 시세. 거래일이 아닌 날이나 결측일에 대비해
+    # "그 날 이하 최근값"을 쓴다(휴장·상장 이전 구간은 None).
+    idle_dates = sorted(idle_series) if idle_series else []
+
+    def idle_level(day: date) -> float | None:
+        pos = bisect_right(idle_dates, day) - 1
+        return idle_series[idle_dates[pos]] if pos >= 0 else None
 
     for i in range(len(rebalance_dates) - 1):
         period_start = rebalance_dates[i]
@@ -1028,6 +1103,38 @@ def run_momentum_backtest(
             exposure = exposure_fn(db, period_start)
             weights_by_iid = {iid: w * exposure for iid, w in weights_by_iid.items()}
 
+        # 편입비중 합이 1.0 미만이면(exposure_fn으로 노출비중을 줄인 경우) 나머지는 현금
+        # (배수 1.0, 무수익)으로 보유한다고 간주(실험#7에서 발견한 버그 수정).
+        # idle_mode="index"면 그 몫을 지수 ETF로 담는다(실험#19).
+        cash_weight = max(0.0, 1.0 - sum(weights_by_iid.values()))
+        idle_base = idle_level(period_start) if (idle_mode == "index" and holdings and cash_weight > 0) else None
+        etf_target = cash_weight if idle_base else 0.0
+
+        traded = set(prev_end_weights) | set(weights_by_iid)
+        sell_amt = sum(max(0.0, prev_end_weights.get(k, 0.0) - weights_by_iid.get(k, 0.0)) for k in traded)
+        buy_amt = sum(max(0.0, weights_by_iid.get(k, 0.0) - prev_end_weights.get(k, 0.0)) for k in traded)
+        cost_stats["turnover_sum"] += (sell_amt + buy_amt) / 2
+        cost_stats["rebalances"] += 1
+        if cost is not None:
+            # ETF 몫은 상계한다 — 직전 구간 종료분(prev_end_etf)보다 목표(etf_target)가
+            # 작으면 차액만 팔고, 크면 차액만 산다. 계속 들고 갈 몫에 왕복 수수료를
+            # 물리지 않기 위함이다. idle_mode="cash"면 etf_target=0이라 기존과 동일하게
+            # 지수 ETF 몫(stop_loss_mode="index")이 여기서 전량 청산된다.
+            etf_sell = max(0.0, prev_end_etf - etf_target)
+            etf_buy = max(0.0, etf_target - prev_end_etf)
+            fee = (
+                sell_amt * cost.sell_rate
+                + buy_amt * cost.buy_rate
+                + etf_sell * cost.etf_sell_rate
+                + etf_buy * cost.buy_rate
+            )
+            cost_stats["rebalance_cost"] += fee * nav
+            nav *= 1.0 - fee
+            # 비용은 구간 시작 시점에 나가므로 그 날 NAV 점을 갱신한다(구간 경계에서 두 번
+            # 찍히지 않게 append 대신 치환).
+            nav_series[-1] = (nav_series[-1][0], nav)
+        prev_end_etf = 0.0
+
         rebalance_log.append(
             {
                 "date": period_start,
@@ -1041,6 +1148,7 @@ def run_momentum_backtest(
         if not holdings or len(trading_days) < 2:
             for day in trading_days[1:]:
                 nav_series.append((day, nav))
+            prev_end_weights = dict(weights_by_iid)  # 매수만 하고 구간이 없었던 경우
             continue
 
         value_paths = {
@@ -1077,9 +1185,24 @@ def run_momentum_backtest(
                     iid: apply_stop_loss_with_growth(raw_paths[iid], trading_days, stops[iid], post_stop_series or {})
                     for iid in holdings
                 }
-        # 편입비중 합이 1.0 미만이면(exposure_fn으로 노출비중을 줄인 경우) 나머지는
-        # 현금(배수 1.0, 무수익)으로 보유한다고 간주(실험#7에서 발견한 버그 수정).
-        cash_weight = max(0.0, 1.0 - sum(weights_by_iid.values()))
+
+            if cost is not None and stop_loss_mode in ("cash", "index"):
+                # 손절 = 매도. 청산 시점(stops[iid][0])부터의 가치배수를 매도비용만큼 깎는다.
+                # index 모드는 그 대금으로 ETF를 사므로 매수 수수료까지 문다.
+                keep = 1.0 - cost.sell_rate
+                if stop_loss_mode == "index":
+                    keep *= 1.0 - cost.buy_rate
+                for iid, st in stops.items():
+                    if st is None:
+                        continue
+                    path = value_paths[iid]
+                    cost_stats["stop_cost"] += weights_by_iid[iid] * path[trading_days[st[0]]] * (1 - keep) * nav
+                    for k in range(st[0], len(trading_days)):
+                        path[trading_days[k]] *= keep
+        # 미투자분의 일별 가치배수 — 현금이면 1.0 고정, ETF면 구간 시작 대비 지수 수익률.
+        idle_path = (
+            {d: (idle_level(d) or idle_base) / idle_base for d in trading_days} if idle_base else None
+        )
         period_base_nav = nav
 
         if stop_loss_pct is not None and stop_loss_mode == "redistribute":
@@ -1094,6 +1217,13 @@ def run_momentum_backtest(
                 day = trading_days[i]
                 for iid in [j for j in active if stops[j] is not None and i >= stops[j][0]]:
                     proceeds = units[iid] * stops[iid][1]
+                    if cost is not None:
+                        # 손절 매도 -> 잔여 종목 재매수. 팔 곳이 없어 현금으로 남으면 매수비용은 없다.
+                        gross = proceeds
+                        proceeds *= (1.0 - cost.sell_rate) * (
+                            1.0 - cost.buy_rate if len(active) > 1 else 1.0
+                        )
+                        cost_stats["stop_cost"] += (gross - proceeds) * period_base_nav
                     units[iid] = 0.0
                     active.remove(iid)
                     base = sum(units[j] * raw_paths[j][day] for j in active)
@@ -1103,14 +1233,33 @@ def run_momentum_backtest(
                             units[j] *= scale
                     else:
                         freed_cash += proceeds
-                multiplier = cash_weight + freed_cash + sum(units[j] * raw_paths[j][day] for j in active)
+                idle_mult = idle_path[day] if idle_path else 1.0
+                multiplier = cash_weight * idle_mult + freed_cash + sum(units[j] * raw_paths[j][day] for j in active)
                 nav = period_base_nav * multiplier
                 nav_series.append((day, nav))
+            last = trading_days[-1]
+            prev_end_weights = {j: units[j] * raw_paths[j][last] / multiplier for j in active}
         else:
             for day in trading_days[1:]:
-                multiplier = cash_weight + sum(weights_by_iid[iid] * value_paths[iid][day] for iid in holdings)
+                idle_mult = idle_path[day] if idle_path else 1.0
+                multiplier = cash_weight * idle_mult + sum(
+                    weights_by_iid[iid] * value_paths[iid][day] for iid in holdings
+                )
                 nav = period_base_nav * multiplier
                 nav_series.append((day, nav))
+            # 구간 종료 시점의 실제 비중. 손절로 청산된 종목은 이미 종목이 아니라
+            # 현금(cash 모드) 또는 지수 ETF(index 모드)라서 종목 비중에서 뺀다.
+            last = trading_days[-1]
+            prev_end_weights = {}
+            for iid in holdings:
+                share = weights_by_iid[iid] * value_paths[iid][last] / multiplier
+                if stops.get(iid) is None:
+                    prev_end_weights[iid] = share
+                elif stop_loss_mode == "index":
+                    prev_end_etf += share
+            if idle_path is not None:
+                # 레짐 축소분으로 산 ETF도 다음 리밸런싱에서 상계 대상이다.
+                prev_end_etf += cash_weight * idle_path[last] / multiplier
 
     metrics = _compute_metrics(nav_series)
     stats = None
@@ -1121,10 +1270,20 @@ def run_momentum_backtest(
             idle_ratio=sl_stats["idle_days"] / max(sl_stats["holding_days"], 1),
             avg_frozen_weight=sl_stats["frozen_weight_sum"] / max(sl_stats["periods"], 1),
         )
+    costs = None
+    if cost is not None and cost_stats["rebalances"]:
+        paid = cost_stats["rebalance_cost"] + cost_stats["stop_cost"]
+        costs = dict(
+            cost_stats,
+            avg_turnover=cost_stats["turnover_sum"] / cost_stats["rebalances"],
+            total_cost=paid,
+            round_trip=cost.round_trip,
+        )
     return BacktestResult(
         nav_series=nav_series,
         rebalances=rebalance_log,
         warnings=warnings_log,
         metrics=metrics,
         stop_loss_stats=stats,
+        cost_stats=costs,
     )

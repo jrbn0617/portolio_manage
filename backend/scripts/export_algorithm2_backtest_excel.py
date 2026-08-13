@@ -36,7 +36,7 @@ from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
 from app.models.price import Price  # noqa: E402
-from app.services.backtest_service import _compute_metrics  # noqa: E402
+from app.services.backtest_service import TransactionCost, _compute_metrics  # noqa: E402
 from scripts.export_weight_scheme_backtest_excel import (  # noqa: E402
     build_guide_sheet,
     build_rebalance_sheet,
@@ -50,7 +50,9 @@ HOLD, TOP_N = 20, 20  # 20거래일 리밸런싱, 20종목
 FLOW_WINDOW, FLOW_KEEP = 60, 0.40  # 기관 순매수 60일 누적, 하위 40% 통과
 CAP_FIELD, CAP_N = "krx_sector", 2  # 케이산업당 2종목
 STOP_LOSS = 0.10  # -10%, 익일시가 체결
-COST = 0.0030  # 왕복 0.30%
+# 거래비용 — 증권거래세는 매도에만, 수수료는 양방향(app.services.backtest_service.TransactionCost).
+# 이전에는 왕복 0.30% 정액이었다.
+COST = TransactionCost(sell_tax=0.0020, commission=0.00015)
 
 # 레짐필터(--regime). 알고리즘 #1 실험7/9에서 확정된 값을 그대로 쓴다 — 여기서 재튜닝하면
 # overview 6번의 다중비교 문제만 키운다. 판정 기준은 유니버스와 같은 50:50 합성지수다
@@ -223,10 +225,15 @@ def run_backtest(db, end: date, use_regime: bool = False):
         exposure = 1.0 if regime is None else float(regime.loc[:d].iloc[-1])
         bear += exposure < 1.0
         w = {p: exposure / len(picks) for p in picks}
-        # 회전율은 노출비중 반영 후 기준 — 레짐 전환만으로도 실제 매매가 발생한다.
-        turn = sum(abs(w.get(k, 0) - prev.get(k, 0)) for k in set(w) | set(prev)) / 2
-        turnovers.append(turn)
-        navs[-1] *= 1 - turn * COST  # 리밸런싱 비용은 직전 구간 종료 NAV에서 차감
+        # 비교 기준은 **직전 구간 종료 시점의 실제 비중**(prev)이다. 목표비중끼리 비교하면
+        # 보유 중의 가격 드리프트와 손절 청산분이 빠져 회전율이 과소평가된다.
+        # 노출비중 반영 후 기준이라 레짐 전환만으로도 매매가 잡힌다.
+        keys = set(w) | set(prev)
+        sell_amt = sum(max(0.0, prev.get(k, 0) - w.get(k, 0)) for k in keys)
+        buy_amt = sum(max(0.0, w.get(k, 0) - prev.get(k, 0)) for k in keys)
+        turnovers.append((sell_amt + buy_amt) / 2)
+        # 리밸런싱 비용은 직전 구간 종료 NAV에서 차감
+        navs[-1] *= 1 - (sell_amt * COST.sell_rate + buy_amt * COST.buy_rate)
 
         log.append({"date": d.date(), "instrument_ids": list(picks), "weights": dict(w)})
 
@@ -238,23 +245,34 @@ def run_backtest(db, end: date, use_regime: bool = False):
         frozen, freeze_from = np.full(len(idx), np.nan), np.full(len(idx), 10**9)
         positions += len(idx)
 
+        last_v = np.ones(len(idx))
         for j in range(ri + 1, period_end + 1):
-            v = np.where(np.isnan(A[j, idx] / entry), 1.0, A[j, idx] / entry)
+            # 보유 중 상장폐지·거래정지로 가격이 끊기면 **마지막 관측치를 유지**한다.
+            # 예전엔 np.where(isnan, 1.0, ...)로 채워서 40% 빠진 뒤 정지된 종목이 진입가로
+            # 되돌아갔다 — 상방 편향이다.
+            raw = A[j, idx] / entry
+            v = np.where(np.isnan(raw), last_v, raw)
+            last_v = v
             for k in np.where(np.isnan(frozen) & (v <= 1 - STOP_LOSS))[0]:
                 gap = 1.0
                 if j < len(days) - 1:
                     o, c = OP[j + 1, idx[k]], CL[j, idx[k]]
                     if not np.isnan(o) and not np.isnan(c) and c:
                         gap = o / c
-                frozen[k], freeze_from[k] = v[k] * gap, j + 1
+                # 동결은 곧 매도다 — 청산가에 매도비용(거래세+수수료)을 물린다.
+                frozen[k], freeze_from[k] = v[k] * gap * (1 - COST.sell_rate), j + 1
                 hits += 1
             cur = v.copy()
             for k in np.where(~np.isnan(frozen))[0]:
                 if j >= freeze_from[k]:
                     cur[k] = frozen[k]
-            navs.append(base * (cash + float((wv * cur).sum())))
+            mult = cash + float((wv * cur).sum())
+            navs.append(base * mult)
             dates.append(days[j])
-        prev = w
+        # 다음 회차 회전율 계산의 기준이 될 "구간 종료 시점의 실제 비중".
+        # 손절된 종목은 이미 팔아 현금이므로 종목 비중에서 뺀다.
+        held = ~(~np.isnan(frozen) & (period_end >= freeze_from))
+        prev = {picks[k]: wv[k] * cur[k] / mult for k in range(len(idx)) if held[k]}
 
     nav = pd.Series(navs, index=dates)
     return nav, log, float(np.mean(turnovers)), hits / max(positions, 1), bear, len(turnovers)

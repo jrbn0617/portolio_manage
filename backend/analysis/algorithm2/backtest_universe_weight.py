@@ -164,9 +164,14 @@ def run(idx_names, weight_mode):
         ffrom = np.full(len(idx), 10 ** 9)
         base = navs[-1]
 
+        last_v = np.ones(len(idx))
         for j in range(ri + 1, end + 1):
-            v = A[j, idx] / entry
-            v = np.where(np.isnan(v), 1.0, v)
+            # 보유 중 상장폐지·거래정지로 가격이 끊기면 **마지막 관측치를 유지**한다.
+            # 예전엔 np.where(isnan, 1.0, ...)로 채워서 40% 빠진 뒤 정지된 종목이 진입가로
+            # 되돌아갔다 — 상방 편향이다.
+            raw = A[j, idx] / entry
+            v = np.where(np.isnan(raw), last_v, raw)
+            last_v = v
             hit = np.isnan(frozen) & (v <= 1 - STOP)
             for k in np.where(hit)[0]:
                 gap = 1.0

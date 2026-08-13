@@ -41,6 +41,14 @@ class ScreenConfig:
     ttm_lag_days: int = 90
     consensus_lag_days: int = 0
     peg_min: float = 0.0  # EBITDA PEG가 이 값보다 커야 통과 (기본 0 = 성장률>0과 동치)
+    # 조회 기준일로부터 이 일수보다 오래된 값은 **없는 것으로 본다**(그 종목은 후보에서 탈락).
+    # None이면 아무리 오래된 값도 그대로 쓴다 — 2026-08-13 이전의 기존 동작.
+    #
+    # 왜 필요한가: `_latest_at_or_before`는 "as_of 이하 최근값"만 가져오고 나이를 보지
+    # 않는다. 2014~2018 EV/EBITDA를 백필하자 **2019년 이후 데이터가 없는 종목이 10년 묵은
+    # 배수로 2020년대 스크리닝을 통과**하기 시작했다(2026-06-30 기준 후보의 62%가 100일
+    # 초과, p90 3,623일). 세 지표 모두 월간 시계열이라 정상이면 나이가 0~31일이어야 한다.
+    max_age_days: int | None = None
 
 
 def _build_metric_index(db: Session, instrument_ids: list[int], metric: str) -> dict[int, tuple[list[date], list[float]]]:
@@ -60,13 +68,21 @@ def _build_metric_index(db: Session, instrument_ids: list[int], metric: str) -> 
     return idx
 
 
-def _latest_at_or_before(idx: dict[int, tuple[list[date], list[float]]], instrument_id: int, as_of: date) -> float | None:
+def _latest_at_or_before(
+    idx: dict[int, tuple[list[date], list[float]]],
+    instrument_id: int,
+    as_of: date,
+    max_age_days: int | None = None,
+) -> float | None:
+    """as_of 이하 최근값. max_age_days를 주면 그보다 오래된 값은 None으로 취급한다."""
     entry = idx.get(instrument_id)
     if not entry:
         return None
     dates, values = entry
     pos = bisect.bisect_right(dates, as_of) - 1
     if pos < 0:
+        return None
+    if max_age_days is not None and (as_of - dates[pos]).days > max_age_days:
         return None
     return values[pos]
 
@@ -101,9 +117,9 @@ def screen_by_ebitda_peg(
     excluded_no_data = 0
     excluded_peg = 0
     for iid in universe:
-        ttm = _latest_at_or_before(ttm_idx, iid, ttm_as_of)
-        fwd = _latest_at_or_before(fwd_idx, iid, consensus_as_of)
-        mult = _latest_at_or_before(mult_idx, iid, consensus_as_of)
+        ttm = _latest_at_or_before(ttm_idx, iid, ttm_as_of, cfg.max_age_days)
+        fwd = _latest_at_or_before(fwd_idx, iid, consensus_as_of, cfg.max_age_days)
+        mult = _latest_at_or_before(mult_idx, iid, consensus_as_of, cfg.max_age_days)
         if ttm is None or fwd is None or mult is None or ttm == 0 or fwd <= 0:
             excluded_no_data += 1
             continue

@@ -4,7 +4,10 @@
 손절  : 없음 / -10%(익일시가, 현금동결)
 
 고정: 코스피200+코스닥150, 기관 순매수 하위40% -> 6개월 모멘텀 상위 20종목,
-      동일가중, 월간(20거래일) 리밸런싱, 왕복 0.30%.
+      동일가중, 월간(20거래일) 리밸런싱.
+
+거래비용은 증권거래세(매도 0.20%) + 위탁수수료(양방향 각 0.015%)로 계산한다
+(app.services.backtest_service.TransactionCost). 손절 동결도 매도로 보고 비용을 문다.
 """
 import sys
 from pathlib import Path
@@ -18,13 +21,15 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
+from app.services.backtest_service import TransactionCost  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 START = "2019-01-01"
+HOLDOUT_START = "2020-01-01"  # 이 날짜 이전 성과는 봉인 — CLAUDE.md "홀드아웃" 절
 SKIP, MOM_N = 21, 126
 HOLD, TOP_N = 20, 20
 FLOW_WINDOW, FLOW_KEEP = 60, 0.40
-COST = 0.0030
+COST = TransactionCost(sell_tax=0.0020, commission=0.00015)
 OUT_DIR = REPO_DIR / "reference"
 
 CAPS = [("제약없음", None, None), ("케이산업2종목", "krx_sector", 2), ("팩셋섹터5종목", "sector", 5)]
@@ -116,10 +121,13 @@ def run(field, cap, stop):
             if len(picks) < TOP_N:
                 continue
 
+        # prev = 직전 구간 종료 시점의 **실제** 비중 (드리프트·손절청산 반영)
         w = {p: 1 / len(picks) for p in picks}
-        turn = sum(abs(w.get(k, 0) - prev.get(k, 0)) for k in set(w) | set(prev)) / 2
-        tn.append(turn)
-        navs[-1] *= (1 - turn * COST)
+        keys = set(w) | set(prev)
+        sell_amt = sum(max(0.0, prev.get(k, 0) - w.get(k, 0)) for k in keys)
+        buy_amt = sum(max(0.0, w.get(k, 0) - prev.get(k, 0)) for k in keys)
+        tn.append((sell_amt + buy_amt) / 2)
+        navs[-1] *= 1 - (sell_amt * COST.sell_rate + buy_amt * COST.buy_rate)
 
         idx = [col_ix[p] for p in picks]
         wv = np.full(len(idx), 1 / len(idx))
@@ -127,8 +135,14 @@ def run(field, cap, stop):
         end = min(ri + HOLD, len(days) - 1)
         frozen, ffrom = np.full(len(idx), np.nan), np.full(len(idx), 10 ** 9)
         pos += len(idx)
+        last_v = np.ones(len(idx))
         for j in range(ri + 1, end + 1):
-            v = np.where(np.isnan(A[j, idx] / entry), 1.0, A[j, idx] / entry)
+            # 보유 중 상장폐지·거래정지로 가격이 끊기면 **마지막 관측치를 유지**한다.
+            # 예전엔 np.where(isnan, 1.0, ...)로 채워서 40% 빠진 뒤 정지된 종목이 진입가로
+            # 되돌아갔다 — 상방 편향이다.
+            raw = A[j, idx] / entry
+            v = np.where(np.isnan(raw), last_v, raw)
+            last_v = v
             if stop is not None:
                 for k in np.where(np.isnan(frozen) & (v <= 1 - stop))[0]:
                     gap = 1.0
@@ -136,15 +150,18 @@ def run(field, cap, stop):
                         o, c = OP[j + 1, idx[k]], CL[j, idx[k]]
                         if not np.isnan(o) and not np.isnan(c) and c:
                             gap = o / c
-                    frozen[k], ffrom[k] = v[k] * gap, j + 1
+                    # 동결 = 매도이므로 청산가에 매도비용을 물린다
+                    frozen[k], ffrom[k] = v[k] * gap * (1 - COST.sell_rate), j + 1
                     hits += 1
             cur = v.copy()
             for k in np.where(~np.isnan(frozen))[0]:
                 if j >= ffrom[k]:
                     cur[k] = frozen[k]
-            navs.append(base * float((wv * cur).sum()))
+            mult = float((wv * cur).sum())
+            navs.append(base * mult)
             dates.append(days[j])
-        prev = w
+        held = ~(~np.isnan(frozen) & (end >= ffrom))
+        prev = {picks[k]: wv[k] * cur[k] / mult for k in range(len(idx)) if held[k]}
     return pd.Series(navs, index=dates), np.mean(tn), hits / max(pos, 1)
 
 
@@ -156,11 +173,23 @@ def met(s):
     return c, v, (s / s.cummax() - 1).min(), (c / v if v else np.nan)
 
 
+def clip_holdout(s):
+    """홀드아웃 경계 — 성과는 2020-01-01부터만 잰다 (CLAUDE.md "홀드아웃" 절).
+
+    형성일은 그 직전 리밸런싱부터 시작하되(위 run이 2019년부터 돌린다), **성과 구간**을
+    잘라 1.0으로 리베이스한다. 경계를 리밸런싱 날짜에 걸면 첫 형성일이 2020-03-31로
+    밀려 코로나 폭락이 표본에서 통째로 빠진다 — 실측으로 판정이 뒤집힌 적이 있다.
+    """
+    cut = s.loc[s.index >= HOLDOUT_START]
+    return cut / cut.iloc[0]
+
+
 curves, rows = {}, []
 for cname, fld, cap in CAPS:
     for sname, stop in STOPS:
         label = f"{cname} · {sname}"
         nav, t, hr = run(fld, cap, stop)
+        nav = clip_holdout(nav)
         curves[label] = nav
         c, v, mdd, sh = met(nav)
         rows.append(dict(섹터캡=cname, 손절=sname, CAGR=c, 변동성=v, MDD=mdd,
