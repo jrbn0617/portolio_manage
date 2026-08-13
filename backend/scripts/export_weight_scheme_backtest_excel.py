@@ -87,6 +87,10 @@ def parse_args():
     p.add_argument("--ttm-lag-days", type=int, default=90)
     p.add_argument("--consensus-lag-days", type=int, default=0)
     p.add_argument("--peg-min", type=float, default=0.0)
+    # 조회 기준일로부터 이보다 오래된 팩터값은 없는 것으로 보고 그 종목을 후보에서 뺀다.
+    # 0을 주면 제한 없음(2026-08-13 이전 동작) — 그 경우 10년 묵은 밸류에이션으로도 통과한다.
+    p.add_argument("--max-age-days", type=int, default=100,
+                   help="팩터값 신선도 상한(일). 0이면 제한 없음")
     p.add_argument("--stop-loss-pct", type=float, default=0.10)
     p.add_argument("--stop-loss-execution", choices=["close", "next_open"], default="next_open")
     p.add_argument(
@@ -191,6 +195,7 @@ def main():
         ttm_lag_days=args.ttm_lag_days,
         consensus_lag_days=args.consensus_lag_days,
         peg_min=args.peg_min,
+        max_age_days=args.max_age_days or None,
     )
 
     db = SessionLocal()

@@ -48,6 +48,9 @@ from app.services.factor_screen_service import ScreenConfig, screen_by_ebitda_pe
 HOLDOUT_START = date(2020, 1, 1)  # 이 날짜 이전 성과는 봉인 — CLAUDE.md "홀드아웃" 절
 END = date(2026, 7, 31)
 COST = TransactionCost(sell_tax=0.0020, commission=0.00015)
+# 팩터값 신선도 상한 — 조회 기준일로부터 100일 넘은 값은 없는 것으로 보고 후보에서 뺀다.
+# 없으면 2014년 EV/EBITDA로 2026년 종목을 고르게 된다(2026-08-13 실측: 후보의 62%가 스테일).
+MAX_AGE_DAYS = 100
 
 # 알고리즘 #1 확정 파라미터 (docs/algorithms/algorithm1-overview.md 3번)
 A1_UNIVERSES = [("KOSPI", "코스피전체"), ("KOSPI200", "코스피200"),
@@ -61,7 +64,8 @@ def run_algo1(db, index_name: str, cost: TransactionCost | None):
     )
     screen_fn = partial(screen_by_ebitda_peg,
                         config=ScreenConfig(top_pct=0.5, min_sector_size=5, ttm_lag_days=90,
-                                            consensus_lag_days=0, peg_min=0.0),
+                                            consensus_lag_days=0, peg_min=0.0,
+                                            max_age_days=MAX_AGE_DAYS),
                         warn=lambda m: None, info=lambda m: None)
     weight_fn = partial(compute_free_float_weights, max_weight=0.25,
                         group_field="krx_sector", max_group_weight=0.50, min_weight=0.01)
