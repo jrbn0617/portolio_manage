@@ -18,7 +18,11 @@ reference/(별첨 2) 백테스팅자료_회사명(예시).xlsx 포맷으로 출�
         [--max-weight 0.30] [--max-group-weight 0.50]
         [--stop-loss-pct 0.10] [--stop-loss-execution next_open]
         [--ma-window-days 200] [--bear-exposure 0.5]
+        [--sell-tax 0.0020] [--commission 0.00015]
         [--start 2020-01-01] [--end 2026-07-31] [--out ...]
+
+거래비용은 기본으로 반영한다(매도 증권거래세 0.20% + 위탁수수료 0.015% 양방향).
+`--sell-tax 0 --commission 0` 을 주면 비용 없이 돌던 이전 값을 그대로 재현한다.
 """
 import argparse
 import sys
@@ -40,6 +44,7 @@ from app.services.backtest_service import (
     BacktestConfig,
     _compute_metrics,
     compute_free_float_weights,
+    TransactionCost,
     compute_regime_exposure,
     run_momentum_backtest,
 )
@@ -97,6 +102,10 @@ def parse_args():
     p.add_argument("--max-weight", type=float, default=0.25)
     p.add_argument("--min-weight", type=float, default=None, help="이 비중 미만 종목은 편입 제외 후 잔여에 비례 재분배 (예: 0.01)")
     p.add_argument("--max-group-weight", type=float, default=0.50)
+    # 거래비용 — 증권거래세는 매도에만, 수수료는 양방향(TransactionCost). 0 0 을 주면 비용 없이
+    # 돌던 예전 값을 그대로 재현한다.
+    p.add_argument("--sell-tax", type=float, default=0.0020, help="매도 증권거래세(+농특세)")
+    p.add_argument("--commission", type=float, default=0.00015, help="위탁수수료(매수·매도 각각)")
     p.add_argument("--out", default=None)
     return p.parse_args()
 
@@ -227,6 +236,11 @@ def main():
             if args.stop_loss_mode == "index"
             else None
         ),
+        cost=(
+            TransactionCost(sell_tax=args.sell_tax, commission=args.commission)
+            if (args.sell_tax or args.commission)
+            else None
+        ),
     )
 
     if result.warnings:
@@ -305,6 +319,16 @@ def main():
             f"\n손절 통계: 발동 {s['triggered']}/{s['positions']}건 ({s['trigger_rate']:.1%})  "
             f"현금동결 일수비중 {s['idle_ratio']:.1%}  구간평균 동결비중 {s['avg_frozen_weight']:.1%}"
         )
+
+    if result.cost_stats:
+        c = result.cost_stats
+        print(
+            f"\n거래비용: 매도 거래세 {args.sell_tax:.2%} + 수수료 {args.commission:.3%}(양방향) "
+            f"= 왕복 {c['round_trip']:.3%}  |  평균 회전율 {c['avg_turnover']:.0%}/회  "
+            f"누적 차감 {c['total_cost']:.1f}pt (리밸런싱 {c['rebalance_cost']:.1f} + 손절 {c['stop_cost']:.1f})"
+        )
+    else:
+        print("\n거래비용: 반영하지 않음 (--sell-tax 0 --commission 0)")
 
     print(f"\n저장 완료: {out_path}")
     print(f"  시계열: {len(official_dates)}행 ({official_dates[0]} ~ {official_dates[-1]})")

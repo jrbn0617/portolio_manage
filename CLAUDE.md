@@ -23,6 +23,7 @@
 
 | 파일 | 내용 |
 |---|---|
+| `methodology.md` | **공통 방법론** — 과최적화 방지 체계 9종, 거래비용, 슬리피지 취급. 새 실험 전 체크리스트가 여기 있다 |
 | `algorithm1-overview.md` | 알고리즘 #1 확정 스펙 (EBITDA PEG + 모멘텀). **확정, 개발 종료** |
 | `algorithm1-experiments.md` | 알고리즘 #1 실험 로그 13건 |
 | `algorithm1-plain-overview.md` | 알고리즘 #1 비개발자용 설명 |
