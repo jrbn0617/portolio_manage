@@ -12,6 +12,7 @@
 시점마다 find_halted_instruments로 후보에서 걸러낸다(BacktestConfig.halt_lookback_days).
 """
 import calendar
+import math
 from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -386,16 +387,65 @@ def drop_below_min_weight(
     return {iid: active.get(iid, 0.0) for iid in weights}
 
 
+def momentum_score_weights(
+    instrument_ids: list[int],
+    momentum: dict[int, float] | None,
+    mode: str = "log",
+) -> dict[int, float]:
+    """모멘텀 스코어 비례 비중(합 1) — 실험#20의 틸트 재료.
+
+    mode는 "모멘텀 크기를 얼마나 그대로 믿을 것인가"를 정한다:
+      "raw"  — 원값 비례. 분포 꼬리가 두꺼워 상위 1~2종목이 비중을 독식한다
+               (2026-07 실측: 최상위 +828% vs 최하위 +49% → 17배)
+      "log"  — log(1+모멘텀). 순서와 비례성은 유지하되 꼬리만 압축한다(17배 → 5.6배)
+      "rank" — 순위만 사용(1등 n점 … 꼴찌 1점). 크기 정보를 버리고 가장 고르게 편다
+
+    음수 모멘텀이 섞이면(하락장) 최솟값만큼 평행이동해 전부 양수로 만든 뒤 배분한다
+    — compute_momentum_weights와 같은 취급이다. 모멘텀이 없는 종목은 평균 점수를 줘서
+    틸트에 대해 중립으로 둔다(선정 자체는 이미 끝난 뒤이므로 여기서 버리지 않는다).
+    """
+    n = len(instrument_ids)
+    if n == 0:
+        return {}
+    momentum = momentum or {}
+    known = {iid: momentum[iid] for iid in instrument_ids if momentum.get(iid) is not None}
+    if not known:
+        return {iid: 1.0 / n for iid in instrument_ids}
+
+    if mode == "rank":
+        order = sorted(known, key=lambda i: known[i], reverse=True)
+        score = {iid: float(len(order) - k) for k, iid in enumerate(order)}
+    else:
+        lo = min(known.values())
+        shift = (-lo + 1e-9) if lo < 0 else 0.0
+        if mode == "log":
+            score = {iid: math.log1p(v + shift) for iid, v in known.items()}
+        elif mode == "raw":
+            score = {iid: v + shift for iid, v in known.items()}
+        else:
+            raise ValueError(f"알 수 없는 tilt_score: {mode}")
+
+    avg = sum(score.values()) / len(score)
+    for iid in instrument_ids:
+        score.setdefault(iid, avg)
+    total = sum(score.values())
+    if total <= 0:
+        return {iid: 1.0 / n for iid in instrument_ids}
+    return {iid: s / total for iid, s in score.items()}
+
+
 def compute_free_float_weights(
     db: Session,
     instrument_ids: list[int],
     as_of_date: date,
     warn: Logger | None = None,
-    momentum: dict[int, float] | None = None,  # WeightFn 시그니처 통일용, 여기선 안 씀
+    momentum: dict[int, float] | None = None,  # 실험#20 이전에는 시그니처 통일용이었다
     max_weight: float | None = None,
     group_field: str | None = None,
     max_group_weight: float | None = None,
     min_weight: float | None = None,
+    momentum_tilt: float = 0.0,
+    tilt_score: str = "log",
 ) -> dict[int, float]:
     """보유종목의 유동주식시가총액(raw_close x 상장주식수 x 유동비율) 비례 가중치.
     데이터가 없는 종목은 동일가중 몫(1/n)을 그대로 배정하고, 나머지 예산을 시총
@@ -433,6 +483,15 @@ def compute_free_float_weights(
         weights = {iid: equal_share for iid in missing}
         for iid, cap in caps.items():
             weights[iid] = remaining_budget * (cap / total_cap)
+
+    # 실험#20 — 유동시총 비중과 모멘텀 스코어 비중을 momentum_tilt(λ)로 혼합한다.
+    # λ=0이면 이 블록을 건너뛰므로 기존 경로와 비트 단위로 동일하다.
+    if momentum_tilt:
+        ms = momentum_score_weights(instrument_ids, momentum, tilt_score)
+        weights = {
+            iid: (1.0 - momentum_tilt) * weights.get(iid, 0.0) + momentum_tilt * ms.get(iid, 0.0)
+            for iid in instrument_ids
+        }
 
     if max_weight is None and max_group_weight is None and min_weight is None:
         return weights
