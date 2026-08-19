@@ -23,6 +23,8 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
 from app.services.derived_prices import recompute_dividend_adjusted  # noqa: E402
 from app.services.upload_service import _upsert_dividend  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
+from app.services.instrument_names import refresh_instrument_names  # noqa: E402
 
 SEIBRO_URL = "https://seibro.or.kr"
 MENU_HREF_FRAGMENT = "menuNo=285"  # 기업 > 배당정보 > 배당내역전체검색
@@ -74,7 +76,7 @@ def main():
     print(f"{len(raw)}건 수신")
     if raw.empty:
         print("적재할 데이터가 없습니다.")
-        return {"fetched": 0, "upserted": 0, "failed": 0, "recomputed": 0}
+        return {"fetched": 0, "upserted": 0, "renamed": 0, "failed": 0, "recomputed": 0}
 
     # 응답 테이블은 2단 헤더(MultiIndex)라 이름이 불안정 — 확인된 열 위치로 추출한다.
     # 0=배정기준일 1=현금배당지급일 4=종목코드 5=종목명 10=주당배당금(일반,현금)
@@ -91,6 +93,11 @@ def main():
 
     db = SessionLocal()
     instruments_by_ticker = {t: i for t, i in db.query(Instrument.ticker, Instrument.id).all()}
+
+    # 응답에 종목명이 함께 오므로 사명 변경을 여기서 반영한다 (KRX 추가 호출 없음).
+    renamed = refresh_instrument_names(
+        db, dict(zip(df["ticker"], df["name"])), "SEIBRO 배당")["renamed"]
+    db.commit()
 
     touched_min_exdate: dict[int, object] = {}
     upserted = 0
@@ -118,7 +125,8 @@ def main():
     db.commit()
     print(f"영향받은 종목 {len(touched_min_exdate)}개 재계산 완료.")
 
-    return {"fetched": len(raw), "upserted": upserted, "failed": len(errors), "recomputed": len(touched_min_exdate)}
+    return {"fetched": len(raw), "upserted": upserted, "renamed": renamed,
+            "failed": len(errors), "recomputed": len(touched_min_exdate)}
 
 
 class _Tee:
@@ -167,6 +175,8 @@ def run(trigger: str = "manual") -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real_stdout
+        status = resolve_batch_status(db, status)
+        batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)
         db.add(batch)

@@ -49,6 +49,7 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
 from app.models.price import Price  # noqa: E402
 from app.services.bbg import fetch_bbg_timeseries  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
 
 # 블룸버그 티커 -> (우리 ticker, 이름)
 INDEX_MAP = {
@@ -182,6 +183,7 @@ def run(trigger="manual", start=None, end=None, dry_run=False) -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real
+        status = resolve_batch_status(db, status)
         batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)

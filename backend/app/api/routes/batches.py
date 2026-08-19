@@ -1,5 +1,6 @@
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,29 +15,96 @@ router = APIRouter(prefix="/batches", tags=["batches"])
 BACKEND_DIR = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
 
-# job_name -> (스크립트 경로, 스케줄 설명). 스크립트는 daily_update.py와 동일한
-# run(trigger) 패턴(BatchRun 기록 + stdout 캡처)을 구현하고 있어야 한다.
-JOBS: dict[str, dict] = {
-    "daily_update": {
-        "script": SCRIPTS_DIR / "daily_update.py",
-        "description": "KRX 장마감 후 가격/실제종가/상장주식수/휴장일/지수편입 갱신(당일+전영업일 재확인) + 파생데이터(월봉·배당조정지수) 재계산",
-        "cron": "0 16 * * 1-5",
-        "timezone": "Asia/Seoul",
-    },
-    "dividends_seibro": {
-        "script": SCRIPTS_DIR / "load_dividends_seibro.py",
-        "description": "SEIBRO 배당내역전체검색에서 최근 1주일 배당(배정기준일 포함) 조회·적재 + 영향 종목 배당조정지수 재계산",
-        "cron": "30 16 * * 1-5",
-        "timezone": "Asia/Seoul",
-    },
+KRX = "pykrx / KRX"
+SEIBRO = "SEIBRO"
+BBG = "블룸버그 터미널"
+DATAGUIDE = "DataGuide"
+MANUAL = "수동 업로드"
+
+
+@dataclass(frozen=True)
+class Job:
+    """스크립트는 daily_update.py와 동일한 run(trigger) 패턴(BatchRun 기록 + stdout 캡처)을
+    구현하고 있어야 한다.
+
+    trigger 인자 형태가 스크립트마다 다르다 — 위치인자(`manual`)를 쓰는 것과
+    `--trigger manual` 플래그를 쓰는 것이 섞여 있다. 한쪽으로 통일하면 crontab도 같이
+    고쳐야 해서, 여기서 스크립트별로 인자를 들고 있는다.
+    """
+
+    name: str
+    description: str
+    source: str
+    cron: str | None
+    schedule: str  # 사람이 읽는 형태
+    script: str | None = None
+    trigger_args: list[str] = field(default_factory=list)
+    timezone: str = "Asia/Seoul"
+    # 아직 쓰지 않는 데이터는 화면에서 감춘다. 지우지 않는 이유는 나중에 다시 열기 위해서다
+    # — 정의를 지우면 어떤 경로로 들어오는 데이터였는지가 함께 사라진다.
+    enabled: bool = True
+
+    @property
+    def runnable(self) -> bool:
+        """수동 업로드로 들어오는 데이터는 돌릴 스크립트가 없다 — 실행 버튼도 없어야 한다."""
+        return self.script is not None
+
+    @property
+    def path(self) -> Path:
+        return SCRIPTS_DIR / self.script
+
+
+# 하루 중 도는 순서. 마지막 두 건은 cron이 아니라 화면에서 파일을 올려 넣는다.
+JOBS: dict[str, Job] = {
+    j.name: j
+    for j in [
+        Job("daily_update",
+            "KRX 장마감 후 가격/실제종가/상장주식수/휴장일/지수편입 갱신(당일+전영업일 재확인)"
+            " + 파생데이터(월봉·배당조정지수) 재계산",
+            KRX, "0 16 * * 1-5", "평일 16:00", "daily_update.py", ["manual"]),
+        Job("dividends_seibro",
+            "SEIBRO 배당내역전체검색에서 최근 1주일 배당(배정기준일 포함) 조회·적재"
+            " + 영향 종목 배당조정지수 재계산",
+            SEIBRO, "30 16 * * 1-5", "평일 16:30", "load_dividends_seibro.py", ["manual"]),
+        Job("refresh_short_selling",
+            "최근 5영업일 공매도 거래량·잔고 재수집",
+            KRX, "0 17 * * 1-5", "평일 17:00", "refresh_short_selling.py", ["manual"]),
+        Job("refresh_etf_prices",
+            "ETF 시세 갱신 (거래일당 KRX 1회). 신규 상장 ETF의 instruments 등록도 이 배치가 한다"
+            " — ETF 분배금 배치보다 반드시 먼저 돌아야 한다",
+            KRX, "30 17 * * 1-5", "평일 17:30", "refresh_etf_prices.py", ["--trigger", "manual"]),
+        Job("etf_dividends_seibro",
+            "ETF 분배금 최근 7일 재조회. instruments에 없는 ETF는 건너뛴다",
+            SEIBRO, "0 18 * * 1-5", "평일 18:00", "load_etf_dividends_seibro.py",
+            ["--trigger", "manual"]),
+        Job("benchmark_indices_bbg",
+            "벤치마크 지수 전 구간(2014~) 재수신·교체. 배당포인트가 사후 정정되므로 증분이 아니라"
+            " 통째로 갈아끼운다. 사내 블룸버그 PC에 SSH로 붙으므로 그 PC가 꺼져 있으면 실패한다",
+            BBG, "30 18 * * 1-5", "평일 18:30", "refresh_benchmark_indices_bbg.py",
+            ["--trigger", "manual"]),
+        Job("shares_outstanding_pykrx",
+            "지난달 마지막 거래일 기준 상장주식수 적재",
+            KRX, "0 6 1 * *", "매월 1일 06:00", "load_shares_outstanding_pykrx.py",
+            ["--trigger", "manual"]),
+        Job("monthly_fundamentals_upload",
+            "재무·유동비율 등 월간 펀더멘털. DataGuide 요청 양식으로 받아 화면에서 올린다"
+            " — 과거 시계열 백필은 pykrx로 수집하지 않는다",
+            DATAGUIDE, None, "수동 요청"),
+        # 매크로 지표는 아직 쓰지 않아 닫아 둔다 (2026-08-18). 쓸 때 enabled=True 로 되돌린다.
+        Job("macro_upload", "매크로 지표. 화면에서 파일을 올려 넣는다", MANUAL, None, "수동 업로드",
+            enabled=False),
+    ]
 }
 
 
 @router.get("/schedule", response_model=list[BatchScheduleRead])
 def list_schedule():
     return [
-        BatchScheduleRead(job_name=name, description=j["description"], cron=j["cron"], timezone=j["timezone"])
-        for name, j in JOBS.items()
+        BatchScheduleRead(job_name=j.name, description=j.description, source=j.source,
+                          cron=j.cron, schedule=j.schedule, timezone=j.timezone,
+                          runnable=j.runnable)
+        for j in JOBS.values()
+        if j.enabled
     ]
 
 
@@ -61,6 +129,8 @@ def trigger_job(job_name: str, db: Session = Depends(get_db)):
     job = JOBS.get(job_name)
     if job is None:
         raise HTTPException(status_code=404, detail=f"등록되지 않은 배치입니다: {job_name}")
+    if not job.runnable:
+        raise HTTPException(status_code=400, detail="수동 업로드로 들어오는 데이터라 실행할 배치가 없습니다.")
 
     running = (
         db.query(BatchRun).filter(BatchRun.job_name == job_name, BatchRun.status == "running").first()
@@ -73,7 +143,7 @@ def trigger_job(job_name: str, db: Session = Depends(get_db)):
     # 않도록 서브프로세스로 분리해 실행하고 즉시 반환한다. 프런트는 /batches/runs를
     # 폴링해 새로 생긴 실행 행의 진행 상태를 반영한다.
     subprocess.Popen(  # noqa: S603
-        [sys.executable, str(job["script"]), "manual"],
+        [sys.executable, str(job.path), *job.trigger_args],
         cwd=str(BACKEND_DIR),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

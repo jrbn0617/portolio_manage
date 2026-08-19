@@ -63,13 +63,17 @@ def last_trading_day_of_month(year: int, month: int) -> datetime.date:
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--date", type=datetime.date.fromisoformat, default=None, help="이 날짜가 속한 달의 마지막 거래일을 기준일로 사용(기본: 지난달)")
+    p.add_argument("--trigger", default="cron", help="BatchRun에 기록할 트리거명")
     return p.parse_args()
 
 
-def main():
-    args = parse_args()
-    if args.date is not None:
-        target_year, target_month = args.date.year, args.date.month
+def main(target_date: datetime.date | None = None):
+    """target_date가 속한 달의 마지막 거래일 기준 상장주식수를 적재하고 요약을 돌려준다.
+
+    run()에서도 호출하므로 인자를 직접 받는다 — parse_args()를 안에서 부르면
+    배치 트리거 경로에서 sys.argv를 잘못 읽는다."""
+    if target_date is not None:
+        target_year, target_month = target_date.year, target_date.month
     else:
         today = datetime.date.today()
         target_year, target_month = _shift_month(today.year, today.month, -1)
@@ -108,7 +112,49 @@ def main():
 
     print("done.")
     db.close()
+    return dict(as_of=str(as_of), fetched=len(df), upserted=len(rows), unknown=len(unknown))
+
+
+def run(trigger: str = "manual", target_date: datetime.date | None = None) -> str:
+    """main()을 BatchRun 이력과 함께 실행한다 (daily_update.run과 동일 패턴).
+
+    이 스크립트만 이력을 안 남겨서 배치 관리 화면에서 실행 결과를 볼 수 없었다."""
+    import io
+    import traceback
+
+    from app.models.batch_run import BatchRun
+    from app.services.market_calendar import resolve_batch_status
+    from scripts.daily_update import _Tee
+
+    db = SessionLocal()
+    batch = BatchRun(job_name="shares_outstanding_pykrx", trigger=trigger, status="running")
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+
+    buf, real_stdout = io.StringIO(), sys.stdout
+    sys.stdout = _Tee(real_stdout, buf)
+    status = "running"
+    try:
+        batch.summary = str(main(target_date))
+        status = "success"
+    except Exception as exc:  # noqa: BLE001
+        status = "failed"
+        batch.error = f"{exc}\n{traceback.format_exc()}"
+    finally:
+        sys.stdout = real_stdout
+        # 월 1회 배치라 실행일이 휴장일이어도 지난달 말 기준으로 정상 동작한다 —
+        # 다른 배치와 달리 holiday 로 덮지 않는다.
+        batch.status = status
+        batch.log = buf.getvalue()
+        batch.finished_at = datetime.datetime.now(datetime.timezone.utc)
+        db.add(batch)
+        db.commit()
+        db.close()
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    a = parse_args()
+    if run(trigger=a.trigger, target_date=a.date) == "failed":
+        sys.exit(1)
