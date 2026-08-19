@@ -3,6 +3,7 @@ uvicorn[standard]==0.34.0
 sqlalchemy==2.0.36
 alembic==1.14.0
 psycopg2-binary==2.9.10
+PyMySQL==1.1.1  # 펀드 소스 DB(MySQL) 읽기 전용 조회
 pydantic-settings==2.7.1
 python-dotenv==1.0.1
 pandas==2.2.3
