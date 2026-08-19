@@ -93,11 +93,14 @@ export interface MonthlyFundamentalInput {
 export interface BatchSchedule {
   job_name: string;
   description: string;
-  cron: string;
+  source: string;
+  cron: string | null; // 수동 업로드 항목은 cron이 없다
+  schedule: string;
   timezone: string;
+  runnable: boolean;
 }
 
-export type BatchRunStatus = "running" | "success" | "failed";
+export type BatchRunStatus = "running" | "success" | "failed" | "holiday";
 
 export interface BatchRun {
   id: number;
@@ -135,4 +138,29 @@ export interface MonthlyFundamentalBulkUploadResult {
   total_rows: number;
   metrics: MonthlyFundamentalBulkUploadMetricResult[];
   errors: string[];
+}
+
+export interface DataSourceRun {
+  status: BatchRunStatus;
+  started_at: string;
+  finished_at: string | null;
+  error: string | null;
+}
+
+export type DataSourceCadence = "daily" | "monthly" | "manual";
+
+export interface DataSource {
+  key: string;
+  label: string;
+  source: string;
+  schedule: string;
+  job_name: string | null;
+  last_date: string | null;
+  date_label: string;
+  cadence: DataSourceCadence;
+  note: string | null;
+  last_run: DataSourceRun | null;
+  stale: boolean;
+  pending: boolean;
+  stale_reason: string | null;
 }

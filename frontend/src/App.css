@@ -10,3 +10,57 @@ nav a.active {
 table {
   font-size: 14px;
 }
+
+/* 데이터 입수 경로 패널 — 어느 화면에서든 상단에 붙어 있는다. */
+.ds-panel {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  margin-top: 12px;
+}
+.ds-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  color: #1f2937;
+  cursor: pointer;
+  text-align: left;
+}
+.ds-caret { color: #94a3b8; }
+.ds-origins { display: flex; gap: 10px; font-size: 12px; }
+.ds-origins span::before { content: "· "; color: #cbd5e1; }
+.ds-badge {
+  margin-left: auto;
+  background: #fee2e2;
+  color: #b91c1c;
+  border-radius: 10px;
+  padding: 1px 9px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.ds-err { color: #b91c1c; font-size: 12px; }
+.ds-body { padding: 0 12px 10px; }
+.ds-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.ds-table th {
+  text-align: left;
+  color: #64748b;
+  font-weight: 600;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 4px 8px;
+}
+.ds-table td { padding: 4px 8px; border-bottom: 1px solid #f1f5f9; }
+.ds-row-stale { background: #fff7f7; }
+.ds-dim { color: #94a3b8; font-style: normal; font-size: 11px; }
+.ds-fail { color: #b91c1c; font-style: normal; font-size: 11px; font-weight: 700; }
+.ds-note { color: #94a3b8; font-style: normal; margin-left: 5px; cursor: help; }
+.ds-tag { border-radius: 4px; padding: 1px 7px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.ds-foot { color: #94a3b8; font-size: 11px; margin: 8px 0 0; }
