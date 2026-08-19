@@ -8,7 +8,9 @@ const emptyForm: InstrumentInput = { ticker: "", name: "", asset_type: "stock", 
 
 const ALL = "전체";
 
-export default function InstrumentsPage() {
+/** assetType 을 주면 그 유형으로 고정한다 (주식/ETF 메뉴에서 재사용).
+ *  주지 않으면 종전처럼 전체를 보여주고 드롭다운으로 고를 수 있다. */
+export default function InstrumentsPage({ assetType }: { assetType?: AssetType } = {}) {
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [form, setForm] = useState<InstrumentInput>(emptyForm);
   const [loading, setLoading] = useState(false);
@@ -16,7 +18,7 @@ export default function InstrumentsPage() {
   const [sectorFilter, setSectorFilter] = useState(ALL);
   const [industryFilter, setIndustryFilter] = useState(ALL);
   const [tickerFilter, setTickerFilter] = useState("");
-  const [assetTypeFilter, setAssetTypeFilter] = useState<string>(ALL);
+  const [assetTypeFilter, setAssetTypeFilter] = useState<string>(assetType ?? ALL);
 
   async function load() {
     setLoading(true);
@@ -73,6 +75,11 @@ export default function InstrumentsPage() {
     setSectorFilter(ALL);
     setIndustryFilter(ALL);
   }, [assetTypeFilter]);
+
+  // 상위 메뉴(주식/ETF)가 바뀌면 고정 유형도 따라간다.
+  useEffect(() => {
+    if (assetType) setAssetTypeFilter(assetType);
+  }, [assetType]);
 
   useEffect(() => {
     load();
@@ -138,14 +145,16 @@ export default function InstrumentsPage() {
           value={tickerFilter}
           onChange={(e) => setTickerFilter(e.target.value)}
         />
-        <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}>
-          <option value={ALL}>유형 전체 ({instruments.length})</option>
-          {ASSET_TYPES.filter((t) => assetTypeCounts.has(t)).map((t) => (
-            <option key={t} value={t}>
-              {t} ({assetTypeCounts.get(t)})
-            </option>
-          ))}
-        </select>
+        {!assetType && (
+          <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}>
+            <option value={ALL}>유형 전체 ({instruments.length})</option>
+            {ASSET_TYPES.filter((t) => assetTypeCounts.has(t)).map((t) => (
+              <option key={t} value={t}>
+                {t} ({assetTypeCounts.get(t)})
+              </option>
+            ))}
+          </select>
+        )}
         <select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)}>
           {sectors.map((s) => (
             <option key={s} value={s}>

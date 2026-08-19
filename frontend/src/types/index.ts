@@ -164,3 +164,68 @@ export interface DataSource {
   pending: boolean;
   stale_reason: string | null;
 }
+
+export interface Fund {
+  id: number;
+  fund_code: string;
+  name: string;
+  master_fund_code: string | null;
+  is_manage_fund: boolean;
+  class_str: string | null;
+  special: boolean;
+  manage_company: string | null;
+  category: string | null;
+  region: string | null;
+  incept_dt: string | null;
+}
+
+export interface FundClass {
+  fund_code: string;
+  name: string;
+  class_str: string | null;
+  special: boolean;
+  incept_dt: string | null;
+  last_nav: number | null;
+  last_dt: string | null;
+}
+
+export interface FundDetail extends Fund {
+  custodian: string | null;
+  lead_dist: string | null;
+  term_dt: string | null;
+  nav_from: string | null;
+  nav_to: string | null;
+  nav_count: number;
+  settlement_count: number;
+  classes: FundClass[];
+}
+
+export interface FundNavPoint {
+  base_dt: string;
+  nav: number | null;
+  adj_nav: number | null;
+  adj_factor: number | null;
+  aum: number | null;
+}
+
+export interface FundSettlement {
+  period_start_value: string | null;
+  period_end_value: string;
+  settlement_type: string;
+  nav: number | null;
+  post_settlement_nav: number | null;
+  ex_dividend_dt: string | null;
+}
+
+export interface FundStats {
+  total: number;
+  manage_funds: number;
+  class_funds: number;
+  unmapped: number;
+  nav_rows: number;
+  nav_from: string | null;
+  nav_to: string | null;
+  updated_at: string | null;
+}
+
+export type FundKind = "manage" | "class" | "all";

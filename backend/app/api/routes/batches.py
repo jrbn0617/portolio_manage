@@ -16,6 +16,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[3]
 SCRIPTS_DIR = BACKEND_DIR / "scripts"
 
 KRX = "pykrx / KRX"
+KOFIA = "KOFIA 전자공시"
 SEIBRO = "SEIBRO"
 BBG = "블룸버그 터미널"
 DATAGUIDE = "DataGuide"
@@ -85,6 +86,12 @@ JOBS: dict[str, Job] = {
         Job("shares_outstanding_pykrx",
             "지난달 마지막 거래일 기준 상장주식수 적재",
             KRX, "0 6 1 * *", "매월 1일 06:00", "load_shares_outstanding_pykrx.py",
+            ["--trigger", "manual"]),
+        Job("fund_kofia_daily",
+            "공모펀드 일별 기준가·결산·신규설정 수집 후 수정기준가 갱신."
+            " 기준가는 하루치가 1요청이라 요청 사이에 10분을 쉰다 — 밀린 구간을 따라잡을 때만"
+            " 오래 걸리고 평상시에는 1요청이다",
+            KOFIA, "0 19 * * 1-5", "평일 19:00", "refresh_fund_kofia.py",
             ["--trigger", "manual"]),
         Job("monthly_fundamentals_upload",
             "재무·유동비율 등 월간 펀더멘털. DataGuide 요청 양식으로 받아 화면에서 올린다"

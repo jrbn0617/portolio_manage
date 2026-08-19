@@ -6,6 +6,7 @@ from app.api.routes import (
     data_sources,
     dividend_adjusted_prices,
     dividends,
+    funds,
     index_memberships,
     instruments,
     macro,
@@ -35,6 +36,7 @@ app.include_router(monthly_fundamentals.router)
 app.include_router(uploads.router)
 app.include_router(batches.router)
 app.include_router(data_sources.router)
+app.include_router(funds.router)
 
 
 @app.get("/health")
