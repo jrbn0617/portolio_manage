@@ -20,6 +20,7 @@ export async function fetchFunds(params: {
   q?: string;
   category?: string;
   manage_company?: string;
+  pension?: string;
   kind?: FundKind;
   limit?: number;
 }): Promise<Fund[]> {

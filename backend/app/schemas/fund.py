@@ -13,6 +13,7 @@ class FundRead(BaseModel):
     is_manage_fund: bool
     class_str: str | None
     special: bool
+    pension_type: str | None
     manage_company: str | None
     category: str | None
     region: str | None
@@ -27,6 +28,7 @@ class FundClassRead(BaseModel):
     name: str
     class_str: str | None
     special: bool
+    pension_type: str | None
     incept_dt: date | None
     last_nav: float | None
     last_dt: date | None

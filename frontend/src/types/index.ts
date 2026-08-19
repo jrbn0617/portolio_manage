@@ -173,6 +173,7 @@ export interface Fund {
   is_manage_fund: boolean;
   class_str: string | null;
   special: boolean;
+  pension_type: string | null;
   manage_company: string | null;
   category: string | null;
   region: string | null;
@@ -184,6 +185,7 @@ export interface FundClass {
   name: string;
   class_str: string | null;
   special: boolean;
+  pension_type: string | null;
   incept_dt: string | null;
   last_nav: number | null;
   last_dt: string | null;

@@ -47,6 +47,9 @@ def list_funds(
     q: str | None = Query(None, description="펀드명 또는 펀드코드 부분일치"),
     category: str | None = None,
     manage_company: str | None = None,
+    pension: str | None = Query(None, pattern="^(퇴직연금|개인연금|연금전체|일반)$",
+                                description="연금 성격 필터. 연금전체=퇴직+개인, 일반=연금 아님"),
+    special: bool | None = Query(None, description="구조가 특수한 펀드만/제외"),
     kind: str = Query("manage", pattern="^(manage|class|all)$",
                       description="manage=운용펀드만, class=클래스만, all=전체"),
     with_nav: bool = Query(True, description="기준가가 있는 펀드만"),
@@ -68,6 +71,14 @@ def list_funds(
         query = query.filter(Fund.category == category)
     if manage_company:
         query = query.filter(Fund.manage_company == manage_company)
+    if pension == "연금전체":
+        query = query.filter(Fund.pension_type.isnot(None))
+    elif pension == "일반":
+        query = query.filter(Fund.pension_type.is_(None))
+    elif pension:
+        query = query.filter(Fund.pension_type == pension)
+    if special is not None:
+        query = query.filter(Fund.special.is_(special))
     if with_nav:
         query = query.filter(db.query(FundNav.id).filter(FundNav.fund_id == Fund.id).exists())
     return query.order_by(Fund.name).offset(offset).limit(limit).all()
@@ -88,7 +99,7 @@ def get_fund(fund_code: str, db: Session = Depends(get_db)):
     classes = []
     if fund.master_fund_code:
         rows = db.execute(text("""
-            SELECT f.fund_code, f.name, f.class_str, f.special, f.incept_dt,
+            SELECT f.fund_code, f.name, f.class_str, f.special, f.pension_type, f.incept_dt,
                    n.nav, n.base_dt
             FROM funds f
             LEFT JOIN LATERAL (SELECT nav, base_dt FROM fund_navs
@@ -96,12 +107,14 @@ def get_fund(fund_code: str, db: Session = Depends(get_db)):
             WHERE f.master_fund_code = :m AND f.fund_code <> :m
             ORDER BY f.class_str NULLS LAST, f.name"""), {"m": fund.master_fund_code}).all()
         classes = [FundClassRead(fund_code=r[0], name=r[1], class_str=r[2], special=r[3],
-                                 incept_dt=r[4], last_nav=float(r[5]) if r[5] is not None else None,
-                                 last_dt=r[6]) for r in rows]
+                                 pension_type=r[4], incept_dt=r[5],
+                                 last_nav=float(r[6]) if r[6] is not None else None,
+                                 last_dt=r[7]) for r in rows]
 
     return FundDetail(**{c: getattr(fund, c) for c in
                          ("id", "fund_code", "name", "master_fund_code", "is_manage_fund",
-                          "class_str", "special", "manage_company", "category", "region",
+                          "class_str", "special", "pension_type", "manage_company", "category",
+                          "region",
                           "incept_dt", "custodian", "lead_dist", "term_dt")},
                       nav_from=nav[0], nav_to=nav[1], nav_count=nav[2],
                       settlement_count=n_stl, classes=classes)

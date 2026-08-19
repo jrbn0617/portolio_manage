@@ -34,8 +34,11 @@ class Fund(Base):
 
     # 종류형 분류 결과. 운용펀드는 비어 있다.
     class_str: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    # 연금/퇴직/직판/레버리지 등 특수 목적 여부
+    # 직판/레버리지/목표전환 등 구조가 특수한 펀드 여부 (연금·퇴직은 여기 안 들어간다)
     special: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # '퇴직연금' / '개인연금' / None. 연금·퇴직연금 포트폴리오의 유니버스를 뽑는 축이라
+    # special 과 달리 배제용이 아니라 **선택용**이다.
+    pension_type: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
 
     manage_company: Mapped[str | None] = mapped_column(String(50), nullable=True)
     category: Mapped[str | None] = mapped_column(String(50), nullable=True)

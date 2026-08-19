@@ -35,7 +35,8 @@ from app.db.base import Base  # noqa: E402,F401
 from app.db.fund_source import fund_source_query  # noqa: E402
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.fund import Fund  # noqa: E402
-from app.services.fund_classify import classify_funds  # noqa: E402
+from app.services.fund_classify import (_SPECIAL_KEYWORDS, classify_funds,  # noqa: E402
+                                        pension_type)
 from app.services.kofia_client import fetch_disclosure  # noqa: E402
 
 BATCH_SIZE = 2000
@@ -75,25 +76,28 @@ def build_master(disclosure_df: pd.DataFrame) -> pd.DataFrame:
     # (1) 공시목록 분류 — 계층의 정답
     for code, r in manage_df.iterrows():
         records[code] = dict(fund_code=code, name=r["full_name"], master_fund_code=code,
-                             is_manage_fund=True, class_str=None, special=bool(r["special"]))
+                             is_manage_fund=True, class_str=None, special=bool(r["special"]),
+                             pension_type=r["pension_type"])
     for code, r in class_df.iterrows():
         records[code] = dict(fund_code=code, name=r["fund_name"], master_fund_code=r["manage_code"],
                              is_manage_fund=False, class_str=(r["class_str"] or None),
-                             special=bool(r["special"]))
+                             special=bool(r["special"]), pension_type=r["pension_type"])
 
     # (2) 최근 1년 공시가 없는 과거 펀드 — 매핑은 기존 map 을 그대로 신뢰한다
     for code, master in _existing_map().items():
         if code in records:
             continue
         records[code] = dict(fund_code=code, name=None, master_fund_code=master,
-                             is_manage_fund=(code == master), class_str=None, special=False)
+                             is_manage_fund=(code == master), class_str=None, special=None,
+                             pension_type=None)
 
     # (3) 어디에도 없는 신생 펀드 — 매핑 없이 속성만
     attrs = _newly_attributes()
     alive = _alive_codes(datetime.date.today() - datetime.timedelta(days=365))
     for code in sorted((alive & set(attrs.index)) - set(records)):
         records[code] = dict(fund_code=code, name=None, master_fund_code=None,
-                             is_manage_fund=False, class_str=None, special=False)
+                             is_manage_fund=False, class_str=None, special=None,
+                             pension_type=None)
 
     df = pd.DataFrame(list(records.values()))
 
@@ -104,11 +108,20 @@ def build_master(disclosure_df: pd.DataFrame) -> pd.DataFrame:
     for col in ("manage_company", "incept_dt", "category", "region", "custodian", "lead_dist"):
         df[col] = joined[col]
     df["term_dt"] = None
+
+    # 공시목록에 없던 펀드(위 2·3)는 이름이 이제야 채워졌다 — 그 이름으로 분류를 매긴다.
+    unset = df["special"].isna()
+    df.loc[unset, "special"] = [any(k in n for k in _SPECIAL_KEYWORDS)
+                                for n in df.loc[unset, "name"]]
+    df.loc[unset, "pension_type"] = [pension_type(n) for n in df.loc[unset, "name"]]
+    df["special"] = df["special"].astype(bool)
+
     return df.astype(object).where(pd.notnull(df), None)
 
 
 def upsert(db, df: pd.DataFrame) -> int:
     cols = ["fund_code", "name", "master_fund_code", "is_manage_fund", "class_str", "special",
+            "pension_type",
             "manage_company", "category", "region", "custodian", "lead_dist", "incept_dt", "term_dt"]
     rows = df[cols].to_dict("records")
     done = 0

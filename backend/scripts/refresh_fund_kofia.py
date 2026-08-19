@@ -43,6 +43,7 @@ from sqlalchemy import text  # noqa: E402
 
 from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal, engine  # noqa: E402
+from app.services.fund_classify import _SPECIAL_KEYWORDS, pension_type  # noqa: E402
 from app.services.kofia_client import fetch_daily_price, fetch_newly, fetch_settlement  # noqa: E402
 from app.services.market_calendar import is_market_holiday, resolve_batch_status  # noqa: E402
 
@@ -106,9 +107,12 @@ def ensure_funds(db, raw, codes_names: dict) -> int:
     if not new:
         return 0
     with raw.cursor() as cur:
-        execute_values(cur, """INSERT INTO funds (fund_code, name, is_manage_fund, special)
+        execute_values(cur, """INSERT INTO funds (fund_code, name, is_manage_fund, special,
+                                                  pension_type)
                                VALUES %s ON CONFLICT (fund_code) DO NOTHING""",
-                       [(c, (n or c)[:200], False, False) for c, n in new.items()])
+                       [(c, (n or c)[:200], False,
+                         any(k in (n or "") for k in _SPECIAL_KEYWORDS), pension_type(n or ""))
+                        for c, n in new.items()])
     raw.commit()
     print(f"  신규 펀드 등록 {len(new):,}건")
     return len(new)

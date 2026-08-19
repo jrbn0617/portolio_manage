@@ -11,6 +11,9 @@ import type {
 } from "../types";
 
 const ALL = "전체";
+// 연금 성격은 배제 대상이 아니라 **선택 축**이다 — 연금·퇴직연금 포트폴리오의 유니버스가 된다.
+const PENSION_OPTIONS = [ALL, "연금전체", "퇴직연금", "개인연금", "일반"];
+const PENSION_COLOR: Record<string, string> = { 퇴직연금: "#0f766e", 개인연금: "#1d4ed8" };
 
 function downloadCsv(filename: string, header: string[], rows: (string | number | null)[][]) {
   const escape = (v: string | number | null) => {
@@ -38,6 +41,7 @@ export default function FundsPage() {
   const [q, setQ] = useState("");
   const [category, setCategory] = useState(ALL);
   const [company, setCompany] = useState(ALL);
+  const [pension, setPension] = useState(ALL);
   const [kind, setKind] = useState<FundKind>("manage");
   const [funds, setFunds] = useState<Fund[]>([]);
   const [loading, setLoading] = useState(false);
@@ -62,6 +66,7 @@ export default function FundsPage() {
         q: q.trim() || undefined,
         category: category === ALL ? undefined : category,
         manage_company: company === ALL ? undefined : company,
+        pension: pension === ALL ? undefined : pension,
         kind,
         limit: 300,
       }));
@@ -70,7 +75,8 @@ export default function FundsPage() {
     }
   }
 
-  useEffect(() => { search(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [kind]);
+  useEffect(() => { search(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ },
+            [kind, pension]);
 
   async function select(code: string) {
     setSelected(code);
@@ -134,6 +140,11 @@ export default function FundsPage() {
           <option value={ALL}>유형 전체</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        <select value={pension} onChange={(e) => setPension(e.target.value)}>
+          {PENSION_OPTIONS.map((p) => (
+            <option key={p} value={p}>{p === ALL ? "연금 전체구분" : p}</option>
+          ))}
+        </select>
         <select value={company} onChange={(e) => setCompany(e.target.value)}>
           <option value={ALL}>운용사 전체</option>
           {companies.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -159,6 +170,10 @@ export default function FundsPage() {
                         {f.fund_code}
                         {f.class_str && <> · <span style={{ color: "#7c3aed" }}>{f.class_str}</span></>}
                         {f.category && <> · {f.category}</>}
+                        {f.pension_type && (
+                          <> · <span style={{ color: PENSION_COLOR[f.pension_type] }}>
+                            {f.pension_type}</span></>
+                        )}
                         {f.special && <> · <span style={{ color: "#b45309" }}>특수</span></>}
                       </div>
                     </td>
@@ -246,6 +261,10 @@ export default function FundsPage() {
                             <td>
                               <span style={{ cursor: "pointer", textDecoration: "underline" }}
                                     onClick={() => select(c.fund_code)}>{c.name}</span>
+                              {c.pension_type && (
+                                <span style={{ color: PENSION_COLOR[c.pension_type] }}>
+                                  {" · "}{c.pension_type}</span>
+                              )}
                               {c.special && <span style={{ color: "#b45309" }}> · 특수</span>}
                             </td>
                             <td style={{ textAlign: "right" }}>{num(c.last_nav)}</td>

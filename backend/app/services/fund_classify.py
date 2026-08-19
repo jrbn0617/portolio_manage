@@ -41,9 +41,30 @@ _NOISE = re.compile(
 
 _FALLBACK_KEYWORDS = ["직판", "적립식", "3"]
 
-# 특수 목적 펀드 — 일반 포트폴리오 후보에서 구분해 두려는 용도
-_SPECIAL_KEYWORDS = ["주택", "연금", "퇴직", "소득공제", "전환형", "직판",
+# 특수 목적 펀드 — 일반 포트폴리오 후보에서 구분해 두려는 용도.
+# 납입·상환 구조나 수익률 배율이 일반 펀드와 달라 같은 잣대로 비교하기 어려운 것들이다.
+_SPECIAL_KEYWORDS = ["주택", "소득공제", "전환형", "직판",
                      "적립식", "목표전환", "레버리지", "인버스", "월지급"]
+
+# 연금·퇴직은 special 에서 뺐다 — 운용 자체는 일반 펀드와 같고 세제·판매채널만 다르다.
+# 오히려 **연금 포트폴리오·퇴직연금 포트폴리오를 따로 만들 때 유니버스가 되는 축**이라
+# 걸러낼 대상이 아니라 별도 분류(pension_type)로 둔다.
+PENSION_RETIREMENT = "퇴직연금"
+PENSION_PERSONAL = "개인연금"
+
+
+def pension_type(name: str) -> str | None:
+    """펀드 이름으로 연금 성격을 판정한다. 해당 없으면 None.
+
+    '퇴직'이 있으면 퇴직연금으로 본다 — '퇴직연금'은 두 키워드를 다 갖고 있어서
+    순서를 정해야 하고, 클래스 꼬리에만 '퇴직'이 붙는 형태(`...ClassC-퇴직`)도
+    퇴직연금 전용 클래스라 같은 쪽이다.
+    """
+    if "퇴직" in name:
+        return PENSION_RETIREMENT
+    if "연금" in name:
+        return PENSION_PERSONAL
+    return None
 
 
 def split_manage_and_class(disclosure_df: pd.DataFrame) -> pd.Series:
@@ -147,9 +168,8 @@ def classify_funds(disclosure_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFr
     class_df["class_str"] = pd.Series([e[1] for e in extracted],
                                       index=class_df.index).str.replace(r"[\-\(\)]", "", regex=True)
 
-    class_df["special"] = [any(k in n for k in _SPECIAL_KEYWORDS)
-                           for n in class_df["fund_name"]]
-    manage_df["special"] = [any(k in n for k in _SPECIAL_KEYWORDS)
-                            for n in manage_df["fund_name"]]
+    for frame in (class_df, manage_df):
+        frame["special"] = [any(k in n for k in _SPECIAL_KEYWORDS) for n in frame["fund_name"]]
+        frame["pension_type"] = [pension_type(n) for n in frame["fund_name"]]
 
     return class_df, manage_df
