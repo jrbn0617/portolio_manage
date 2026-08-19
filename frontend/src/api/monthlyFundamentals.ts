@@ -37,3 +37,25 @@ export async function bulkUploadMonthlyFundamentals(file: File): Promise<Monthly
   );
   return data;
 }
+
+/** DataGuide 요청 양식(xlsx)을 내려받는다. month는 'YYYY-MM'(미지정 시 당월). */
+export async function downloadMonthlyFundamentalTemplate(
+  month?: string,
+  lookback?: number
+): Promise<void> {
+  const res = await apiClient.get("/monthly-fundamentals/template", {
+    params: { month: month || undefined, lookback },
+    responseType: "blob",
+  });
+  // 서버가 Content-Disposition으로 파일명을 준다 (CORS에서 노출 설정됨).
+  const disposition = res.headers["content-disposition"] as string | undefined;
+  const matched = disposition?.match(/filename="?([^";]+)"?/);
+  const url = URL.createObjectURL(res.data as Blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = matched?.[1] ?? "monthly_data_request.xlsx";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

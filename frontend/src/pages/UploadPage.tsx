@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { uploadFile } from "../api/data";
-import { bulkUploadMonthlyFundamentals } from "../api/monthlyFundamentals";
+import {
+  bulkUploadMonthlyFundamentals,
+  downloadMonthlyFundamentalTemplate,
+} from "../api/monthlyFundamentals";
 import type { MonthlyFundamentalBulkUploadResult, UploadDataType, UploadResult } from "../types";
 
 const DATA_TYPES: { value: UploadDataType; label: string; columns: string }[] = [
@@ -47,6 +50,8 @@ export default function UploadPage() {
   const [bulkResult, setBulkResult] = useState<MonthlyFundamentalBulkUploadResult | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [templateMonth, setTemplateMonth] = useState("");
+  const [templateBusy, setTemplateBusy] = useState(false);
 
   const selected = DATA_TYPES.find((d) => d.value === dataType)!;
 
@@ -62,6 +67,19 @@ export default function UploadPage() {
       setError(err.response?.data?.detail ?? "업로드에 실패했습니다.");
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleDownloadTemplate() {
+    setTemplateBusy(true);
+    setBulkError(null);
+    try {
+      await downloadMonthlyFundamentalTemplate(templateMonth);
+    } catch {
+      // 실패 응답도 blob으로 오므로 detail을 꺼내려면 별도 파싱이 필요하다 — 여기선 간단히.
+      setBulkError("양식 생성에 실패했습니다. 기간에 해당하는 거래일이 DB에 있는지 확인하세요.");
+    } finally {
+      setTemplateBusy(false);
     }
   }
 
@@ -132,14 +150,48 @@ export default function UploadPage() {
         항목별로 없는 시트는 건너뜁니다.
       </p>
 
-      <input
-        type="file"
-        accept=".xlsx,.xls"
-        onChange={(e) => setBulkFile(e.target.files?.[0] ?? null)}
-      />
-      <button onClick={handleBulkUpload} disabled={!bulkFile || bulkUploading} style={{ marginLeft: 8 }}>
-        {bulkUploading ? "업로드 중..." : "업로드"}
-      </button>
+      <div
+        style={{
+          border: "1px solid #ddd",
+          borderRadius: 6,
+          padding: 12,
+          margin: "12px 0 16px",
+          background: "#f8fafc",
+        }}
+      >
+        <strong style={{ fontSize: 13 }}>1. 요청 양식 받기</strong>
+        <p style={{ color: "#666", fontSize: 12.5, margin: "6px 0 10px", lineHeight: 1.6 }}>
+          현재 상장 보통주 전체와 월말 거래일이 채워진 빈 양식을 내려받아 DataGuide에 요청하고,
+          값이 채워져 돌아온 파일을 아래에 그대로 올리면 됩니다. 시트 구성이 업로드 파서와 맞춰져 있습니다.
+        </p>
+        <label style={{ fontSize: 12.5, color: "#374151" }}>
+          기준월{" "}
+          <input
+            type="month"
+            value={templateMonth}
+            onChange={(e) => setTemplateMonth(e.target.value)}
+            style={{ marginRight: 8 }}
+          />
+        </label>
+        <button onClick={handleDownloadTemplate} disabled={templateBusy}>
+          {templateBusy ? "생성 중..." : "양식 다운로드"}
+        </button>
+        <span style={{ color: "#94a3b8", fontSize: 11.5, marginLeft: 8 }}>
+          미지정 시 당월 기준 최근 6개월
+        </span>
+      </div>
+
+      <strong style={{ fontSize: 13 }}>2. 응답 파일 업로드</strong>
+      <div style={{ marginTop: 8 }}>
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          onChange={(e) => setBulkFile(e.target.files?.[0] ?? null)}
+        />
+        <button onClick={handleBulkUpload} disabled={!bulkFile || bulkUploading} style={{ marginLeft: 8 }}>
+          {bulkUploading ? "업로드 중..." : "업로드"}
+        </button>
+      </div>
 
       {bulkError && <p style={{ color: "crimson" }}>{bulkError}</p>}
 
