@@ -71,3 +71,93 @@ def fetch_disclosure(base_dt: datetime.date | None = None, days: int = 365) -> p
     df = pd.read_xml(StringIO(res), xpath=".//list")
     return df.rename(columns={"standardCd": "펀드코드", "uFundNm": "공시대상",
                               "koreanNm": "회사"})[["펀드코드", "공시대상", "회사"]]
+
+
+def fetch_daily_price(base_dt: datetime.date) -> pd.DataFrame:
+    """하루치 전 펀드 기준가. **1일 = 1요청**이라 백필할 때 요청 수가 곧 일수다.
+
+    반환: base_dt, fund_code, name_kr, nav, tax_base_nav, aum
+    응답이 비면 휴장일이거나 아직 공시 전이다 — 호출자가 판단한다."""
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
+        <message>
+          <proframeHeader>
+            <pfmAppName>FS-DIS2</pfmAppName>
+            <pfmSvcName>DISFundStdPriceSO</pfmSvcName>
+            <pfmFnName>select</pfmFnName>
+          </proframeHeader>
+          <systemHeader></systemHeader>
+            <DISCondFuncDTO>
+            <tmpV30>{base_dt:%Y%m%d}</tmpV30>
+            <tmpV3></tmpV3><tmpV4></tmpV4><tmpV7></tmpV7><tmpV5></tmpV5>
+            <tmpV11></tmpV11><tmpV12></tmpV12><tmpV50></tmpV50><tmpV51></tmpV51>
+        </DISCondFuncDTO>
+        </message>"""
+    res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
+                     "DISFundStdPrice.xml&divisionId=MDIS01004001000000&serviceId=SDIS01004001000")
+    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    if df.empty:
+        return df
+    df = df.rename(columns={"tmpV14": "base_dt", "tmpV12": "fund_code", "tmpV2": "name_kr",
+                            "tmpV5": "aum", "tmpV6": "nav", "tmpV7": "tax_base_nav"})
+    keep = ["base_dt", "fund_code", "name_kr", "nav", "tax_base_nav", "aum"]
+    return df[[c for c in keep if c in df.columns]]
+
+
+def fetch_settlement(base_dt: datetime.date, days: int = 14) -> pd.DataFrame:
+    """결산·상환·분배. 기간 조회라 하루 단위로 부를 필요가 없다."""
+    start_dt = base_dt - datetime.timedelta(days=days)
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
+        <message>
+          <proframeHeader>
+            <pfmAppName>FS-DIS2</pfmAppName>
+            <pfmSvcName>DISFundRdmpSO</pfmSvcName>
+            <pfmFnName>select</pfmFnName>
+          </proframeHeader>
+          <systemHeader></systemHeader>
+            <DISCondFuncDTO>
+            <tmpV30>{start_dt:%Y%m%d}</tmpV30>
+            <tmpV31>{base_dt:%Y%m%d}</tmpV31>
+            <tmpV12></tmpV12><tmpV3></tmpV3><tmpV5></tmpV5><tmpV4></tmpV4><tmpV7></tmpV7>
+        </DISCondFuncDTO>
+        </message>"""
+    res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
+                     "DISFundRdmp.xml&divisionId=MDIS01004004000000&serviceId=SDIS01004004000")
+    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    if df.empty:
+        return df
+    return df.rename(columns={
+        "tmpV11": "fund_code", "tmpV3": "period_start_value", "tmpV4": "period_end_value",
+        "tmpV5": "elapsed_days", "tmpV6": "inception_principal", "tmpV7": "nav",
+        "tmpV8": "tax_base_nav", "tmpV9": "post_settlement_nav", "tmpV10": "settlement_type",
+    })[["fund_code", "period_start_value", "period_end_value", "elapsed_days",
+        "inception_principal", "nav", "tax_base_nav", "post_settlement_nav", "settlement_type"]]
+
+
+def fetch_newly(base_dt: datetime.date, days: int = 14) -> pd.DataFrame:
+    """신규 설정 펀드. 아직 자산운용보고서가 없어 공시목록에 안 잡히는 구간을 메운다."""
+    start_dt = base_dt - datetime.timedelta(days=days)
+    xml = f"""<?xml version="1.0" encoding="utf-8"?>
+        <message>
+          <proframeHeader>
+            <pfmAppName>FS-DIS2</pfmAppName>
+            <pfmSvcName>DISNewEstSO</pfmSvcName>
+            <pfmFnName>select</pfmFnName>
+          </proframeHeader>
+          <systemHeader></systemHeader>
+            <DISCondFuncDTO>
+            <tmpV30>{start_dt:%Y%m%d}</tmpV30>
+            <tmpV31>{base_dt:%Y%m%d}</tmpV31>
+            <tmpV12></tmpV12><tmpV3></tmpV3><tmpV5></tmpV5><tmpV4></tmpV4><tmpV7>1</tmpV7>
+        </DISCondFuncDTO>
+        </message>"""
+    res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
+                     "DISNewEst.xml&divisionId=MDIS01006001000000&serviceId=SDIS01006001000")
+    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    if df.empty:
+        return df
+    return df.rename(columns={
+        "tmpV10": "fund_code", "tmpV1": "manage_company", "tmpV2": "fund_name",
+        "tmpV3": "incept_dt", "tmpV4": "category", "tmpV5": "region",
+        "tmpV8": "custodian", "tmpV9": "lead_dist",
+    })[["fund_code", "manage_company", "fund_name", "incept_dt", "category",
+        "region", "custodian", "lead_dist"]]
