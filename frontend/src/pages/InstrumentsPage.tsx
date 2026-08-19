@@ -16,6 +16,7 @@ export default function InstrumentsPage() {
   const [sectorFilter, setSectorFilter] = useState(ALL);
   const [industryFilter, setIndustryFilter] = useState(ALL);
   const [tickerFilter, setTickerFilter] = useState("");
+  const [assetTypeFilter, setAssetTypeFilter] = useState<string>(ALL);
 
   async function load() {
     setLoading(true);
@@ -26,18 +27,29 @@ export default function InstrumentsPage() {
     }
   }
 
+  const assetTypeCounts = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const i of instruments) c.set(i.asset_type, (c.get(i.asset_type) ?? 0) + 1);
+    return c;
+  }, [instruments]);
+
+  const byAssetType = useMemo(
+    () => (assetTypeFilter === ALL ? instruments : instruments.filter((i) => i.asset_type === assetTypeFilter)),
+    [instruments, assetTypeFilter]
+  );
+
   const sectors = useMemo(
-    () => [ALL, ...Array.from(new Set(instruments.map((i) => i.sector).filter((s): s is string => !!s))).sort()],
-    [instruments]
+    () => [ALL, ...Array.from(new Set(byAssetType.map((i) => i.sector).filter((s): s is string => !!s))).sort()],
+    [byAssetType]
   );
 
   const industries = useMemo(() => {
-    const pool = sectorFilter === ALL ? instruments : instruments.filter((i) => i.sector === sectorFilter);
+    const pool = sectorFilter === ALL ? byAssetType : byAssetType.filter((i) => i.sector === sectorFilter);
     return [ALL, ...Array.from(new Set(pool.map((i) => i.industry).filter((s): s is string => !!s))).sort()];
-  }, [instruments, sectorFilter]);
+  }, [byAssetType, sectorFilter]);
 
   const filtered = useMemo(() => {
-    return instruments.filter((i) => {
+    return byAssetType.filter((i) => {
       if (sectorFilter !== ALL && i.sector !== sectorFilter) return false;
       if (industryFilter !== ALL && i.industry !== industryFilter) return false;
       if (tickerFilter) {
@@ -46,7 +58,7 @@ export default function InstrumentsPage() {
       }
       return true;
     });
-  }, [instruments, sectorFilter, industryFilter, tickerFilter]);
+  }, [byAssetType, sectorFilter, industryFilter, tickerFilter]);
 
   // 섹터를 바꾸면 더 이상 유효하지 않을 수 있는 산업 필터를 초기화한다.
   useEffect(() => {
@@ -55,6 +67,12 @@ export default function InstrumentsPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sectorFilter]);
+
+  // 유형을 바꾸면 이전 유형에서 고른 섹터·산업이 남아 결과가 0건이 되므로 함께 되돌린다.
+  useEffect(() => {
+    setSectorFilter(ALL);
+    setIndustryFilter(ALL);
+  }, [assetTypeFilter]);
 
   useEffect(() => {
     load();
@@ -120,6 +138,14 @@ export default function InstrumentsPage() {
           value={tickerFilter}
           onChange={(e) => setTickerFilter(e.target.value)}
         />
+        <select value={assetTypeFilter} onChange={(e) => setAssetTypeFilter(e.target.value)}>
+          <option value={ALL}>유형 전체 ({instruments.length})</option>
+          {ASSET_TYPES.filter((t) => assetTypeCounts.has(t)).map((t) => (
+            <option key={t} value={t}>
+              {t} ({assetTypeCounts.get(t)})
+            </option>
+          ))}
+        </select>
         <select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)}>
           {sectors.map((s) => (
             <option key={s} value={s}>

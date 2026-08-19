@@ -1,4 +1,8 @@
+import datetime
+from io import BytesIO
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -10,6 +14,10 @@ from app.schemas.monthly_fundamental import (
     MonthlyFundamentalWithTicker,
 )
 from app.services.monthly_fundamental_bulk_service import process_monthly_fundamental_bulk_upload
+from app.services.monthly_fundamental_template_service import (
+    DEFAULT_LOOKBACK_MONTHS,
+    build_template,
+)
 
 router = APIRouter(prefix="/monthly-fundamentals", tags=["monthly-fundamentals"])
 
@@ -70,6 +78,47 @@ def upsert_monthly_fundamental(payload: MonthlyFundamentalUpsert, db: Session = 
     return MonthlyFundamentalWithTicker(
         id=row.id, instrument_id=row.instrument_id, date=row.date, metric=row.metric, value=float(row.value),
         ticker=instrument.ticker, name=instrument.name,
+    )
+
+
+@router.get("/template")
+def download_template(
+    month: str | None = None,
+    lookback: int = DEFAULT_LOOKBACK_MONTHS,
+    db: Session = Depends(get_db),
+):
+    """DataGuide 요청 양식(xlsx)을 내려준다. 값이 빈 채로 나가고, 채워서 돌아온 파일을
+    그대로 /bulk-upload 에 올리면 된다 — 시트명·행 배치가 업로드 파서와 맞춰져 있다.
+
+    month: 'YYYY-MM' (기본: 이번 달). 그 달까지 최근 lookback 개월치를 담는다.
+    """
+    if lookback < 1 or lookback > 60:
+        raise HTTPException(status_code=400, detail="lookback은 1~60 사이여야 합니다.")
+    today = datetime.date.today()
+    if month:
+        try:
+            year, mon = int(month[:4]), int(month[5:7])
+            datetime.date(year, mon, 1)
+        except (ValueError, IndexError) as exc:
+            raise HTTPException(status_code=400, detail="month는 'YYYY-MM' 형식이어야 합니다.") from exc
+    else:
+        year, mon = today.year, today.month
+
+    try:
+        wb = build_template(db, year, mon, lookback)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = f"monthly_data_request_{year:04d}-{mon:02d}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        # 프런트가 파일명을 읽을 수 있도록 CORS에서 헤더를 노출한다.
+        headers={"Content-Disposition": f'attachment; filename="{name}"',
+                 "Access-Control-Expose-Headers": "Content-Disposition"},
     )
 
 

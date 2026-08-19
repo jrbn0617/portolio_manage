@@ -43,6 +43,8 @@ from app.models.short_selling import ShortSelling  # noqa: E402
 from app.services.derived_prices import recompute_dividend_adjusted, recompute_monthly_bar  # noqa: E402
 from app.services.index_market_cap_service import fetch_and_store_index_market_caps  # noqa: E402
 from app.services.upload_service import _upsert_index_membership  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
+from app.services.instrument_names import refresh_instrument_names  # noqa: E402
 
 REQUEST_DELAY_SEC = 1
 MAX_LOOKBACK_DAYS = 7
@@ -355,8 +357,16 @@ def sync_index_memberships(db, today: datetime.date, instruments_by_ticker: dict
                 time.sleep(REQUEST_DELAY_SEC)
 
 
-def sync_krx_sector(db, today: datetime.date, instruments_by_ticker: dict[str, int]) -> None:
-    """KRX 자체 업종분류(TradingView 분류와 별개)를 종목마다 최신값으로 갱신한다."""
+def sync_krx_sector(db, today: datetime.date, instruments_by_ticker: dict[str, int]) -> int:
+    """KRX 자체 업종분류(TradingView 분류와 별개)와 **종목명**을 최신값으로 갱신한다.
+
+    이 응답에는 '업종명'과 함께 '종목명'이 들어 있다. 종목명은 신규 등록 때만 넣고
+    그 뒤로 갱신하지 않아서 사명 변경이 반영되지 않았는데(삼성엔지니어링→삼성E&A 등),
+    이미 전 종목을 도는 이 호출에 얹으면 **KRX 추가 호출 없이** 매일 최신화된다.
+    종목당 1회인 get_market_ticker_name 으로는 호출 제한에 걸려 못 한다.
+
+    갱신한 종목명 건수를 반환한다."""
+    renamed = 0
     for market in ("KOSPI", "KOSDAQ"):
         df = stock.get_market_sector_classifications(today.strftime("%Y%m%d"), market)
         if df is None or df.empty:
@@ -366,9 +376,13 @@ def sync_krx_sector(db, today: datetime.date, instruments_by_ticker: dict[str, i
             if instrument_id is None:
                 continue
             db.query(Instrument).filter(Instrument.id == instrument_id).update({"krx_sector": r["업종명"]})
+        if "종목명" in df.columns:
+            renamed += refresh_instrument_names(
+                db, {str(t): r["종목명"] for t, r in df.iterrows()}, f"KRX 업종분류({market})")["renamed"]
         db.commit()
         print(f"{market} KRX 업종분류 {len(df)}개 갱신")
         time.sleep(REQUEST_DELAY_SEC)
+    return renamed
 
 
 def fetch_investor_trading(db, day: datetime.date, instruments_by_ticker: dict[str, int]) -> None:
@@ -551,12 +565,13 @@ def main() -> dict:
     print("\n지수 편입 갱신 중...")
     sync_index_memberships(db, today, instruments_by_ticker)
 
-    print("\nKRX 업종분류 갱신 중...")
-    sync_krx_sector(db, today, instruments_by_ticker)
+    print("\nKRX 업종분류·종목명 갱신 중...")
+    renamed = sync_krx_sector(db, today, instruments_by_ticker)
 
     print("\n=== 요약 ===")
     print(f"신규 적재 거래일: {len(missing)}건 ({missing[0]} ~ {missing[-1]})")
     print(f"신규 등록 종목: {created_total}개")
+    print(f"종목명 최신화: {renamed}건")
     print(f"권리락 감지·재수집: {len(refetched)}개")
     print(f"배당조정 지수 재계산 실패: {len(failed)}건")
     for instrument_id, msg in failed[:20]:
@@ -566,6 +581,7 @@ def main() -> dict:
         "missing_days": len(missing),
         "date_range": [str(missing[0]), str(missing[-1])],
         "created_instruments": created_total,
+        "renamed_instruments": renamed,
         "corporate_actions_refetched": len(refetched),
         "dividend_recompute_failed": len(failed),
     }
@@ -616,6 +632,8 @@ def run(trigger: str = "manual") -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real_stdout
+        status = resolve_batch_status(db, status)
+        batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)
         db.add(batch)

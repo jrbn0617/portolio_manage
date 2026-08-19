@@ -29,6 +29,7 @@ from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
 from app.models.price import Price  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
 from scripts.daily_update import _Tee, fetch_short_selling  # noqa: E402
 
 DEFAULT_LOOKBACK_DAYS = 5
@@ -89,6 +90,8 @@ def run(trigger: str, days: int) -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real_stdout
+        status = resolve_batch_status(db, status)
+        batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)
         db.add(batch)

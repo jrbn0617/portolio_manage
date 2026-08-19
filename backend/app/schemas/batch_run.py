@@ -20,5 +20,8 @@ class BatchRunRead(BaseModel):
 class BatchScheduleRead(BaseModel):
     job_name: str
     description: str
-    cron: str
+    source: str
+    cron: str | None  # 수동 업로드 항목은 cron이 없다
+    schedule: str
     timezone: str
+    runnable: bool

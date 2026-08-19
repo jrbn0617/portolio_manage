@@ -49,6 +49,8 @@ from app.db.session import SessionLocal  # noqa: E402
 from app.models.dividend import Dividend  # noqa: E402
 from app.models.instrument import Instrument  # noqa: E402
 from app.services.derived_prices import recompute_dividend_adjusted  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
+from app.services.instrument_names import refresh_instrument_names  # noqa: E402
 
 PAGE_URL = ("https://seibro.or.kr/websquare/control.jsp"
             "?w2xPath=/IPORTAL/user/etf/BIP_CNTS06030V.xml&menuNo=179")
@@ -108,7 +110,8 @@ def main(frm: datetime.date, to: datetime.date, dry_run: bool) -> dict:
     raw = fetch(frm, to)
     if not raw:
         print("적재할 데이터가 없습니다.")
-        return {"fetched": 0, "upserted": 0, "skipped_liquidation": 0, "unknown": 0, "recomputed": 0}
+        return {"fetched": 0, "upserted": 0, "skipped_liquidation": 0, "renamed": 0,
+                "unknown": 0, "recomputed": 0}
 
     liq = sum(1 for r in raw if r.get("RGT_RSN_DTAIL_NM") != PROFIT_KIND)
     keep = [r for r in raw
@@ -118,6 +121,17 @@ def main(frm: datetime.date, to: datetime.date, dry_run: bool) -> dict:
     db = SessionLocal()
     etf = {t: i for t, i in db.query(Instrument.ticker, Instrument.id)
            .filter(Instrument.asset_type == "etf").all()}
+
+    # 응답에 KOR_SECN_NM(한글 종목명)이 함께 오므로 사명 변경을 여기서 반영한다
+    # (KRX 추가 호출 없음). instruments에 없는 ETF는 자동으로 걸러진다.
+    # dry-run에서는 세지만 쓰지 않는다 — 아래 dry_run 분기가 이 지점보다 뒤에 있다.
+    name_stat = refresh_instrument_names(
+        db, {r["ISIN"][3:9]: r.get("KOR_SECN_NM", "") for r in keep}, "SEIBRO ETF 분배금")
+    renamed = name_stat["renamed"]
+    if dry_run:
+        db.rollback()
+    else:
+        db.commit()
 
     # (종목, 배정기준일) 단위로 합산 — 같은 날 여러 건이 올 수 있다
     merged: dict[tuple[int, datetime.date], dict] = {}
@@ -149,7 +163,7 @@ def main(frm: datetime.date, to: datetime.date, dry_run: bool) -> dict:
         print("--dry-run 이므로 변경하지 않고 종료합니다.")
         db.close()
         return {"fetched": len(raw), "upserted": 0, "skipped_liquidation": liq,
-                "unknown": len(unknown), "recomputed": 0}
+                "renamed": 0, "unknown": len(unknown), "recomputed": 0}
 
     touched: dict[int, datetime.date] = {}
     upserted = 0
@@ -184,7 +198,8 @@ def main(frm: datetime.date, to: datetime.date, dry_run: bool) -> dict:
     print(f"ETF 배당 현황: {total[0]:,}건 ({total[1]} ~ {total[2]})")
     db.close()
     return {"fetched": len(raw), "upserted": upserted, "skipped_liquidation": liq,
-            "unknown": len(unknown), "recomputed": len(touched), "failed": failed}
+            "renamed": renamed, "unknown": len(unknown), "recomputed": len(touched),
+            "failed": failed}
 
 
 class _Tee:
@@ -223,6 +238,7 @@ def run(trigger="manual", frm=None, to=None, days=7, dry_run=False) -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real
+        status = resolve_batch_status(db, status)
         batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)

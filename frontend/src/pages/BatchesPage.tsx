@@ -1,9 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { fetchBatchRuns, fetchBatchSchedule, triggerBatch } from "../api/batches";
 import type { BatchRun, BatchSchedule } from "../types";
-
-const STATUS_LABEL: Record<string, string> = { running: "실행 중", success: "성공", failed: "실패" };
-const STATUS_COLOR: Record<string, string> = { running: "#1976d2", success: "#2e7d32", failed: "#c62828" };
+import { SOURCE_COLOR, STATUS_COLOR, STATUS_LABEL } from "../lib/sources";
 
 function formatDuration(startedAt: string, finishedAt: string | null): string {
   const start = new Date(startedAt).getTime();
@@ -73,32 +71,84 @@ export default function BatchesPage() {
     return runs.some((r) => r.job_name === jobName && r.status === "running");
   }
 
+  // /batches/runs 는 started_at 내림차순이라 첫 매치가 최신 실행이다.
+  function lastRunOf(jobName: string): BatchRun | undefined {
+    return runs.find((r) => r.job_name === jobName);
+  }
+
   return (
     <div>
       <h2>배치 관리</h2>
 
       <section style={{ marginBottom: 24 }}>
         <h3>스케줄</h3>
-        {schedules.map((s) => {
-          const running = isJobRunning(s.job_name);
-          return (
-            <div
-              key={s.job_name}
-              style={{ border: "1px solid #ddd", borderRadius: 6, padding: 12, marginBottom: 8 }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong>{s.job_name}</strong>
-                <button onClick={() => handleTrigger(s.job_name)} disabled={triggeringJob !== null || running}>
-                  {running ? "실행 중..." : triggeringJob === s.job_name ? "요청 중..." : "지금 실행"}
-                </button>
-              </div>
-              <p style={{ color: "#555", margin: "6px 0" }}>{s.description}</p>
-              <p style={{ color: "#888", margin: 0, fontSize: 13 }}>
-                cron: <code>{s.cron}</code> ({s.timezone})
-              </p>
-            </div>
-          );
-        })}
+        <table border={1} cellPadding={6} style={{ borderCollapse: "collapse", width: "100%" }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left" }}>배치</th>
+              <th style={{ textAlign: "left" }}>출처</th>
+              <th style={{ textAlign: "left" }}>스케줄</th>
+              <th style={{ textAlign: "left" }}>최근 실행</th>
+              <th style={{ width: 96 }}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedules.map((s) => {
+              const running = isJobRunning(s.job_name);
+              const last = lastRunOf(s.job_name);
+              return (
+                <tr key={s.job_name}>
+                  <td>
+                    <strong>{s.job_name}</strong>
+                    <p style={{ color: "#666", margin: "4px 0 0", fontSize: 12.5, lineHeight: 1.5 }}>
+                      {s.description}
+                    </p>
+                  </td>
+                  <td style={{ color: SOURCE_COLOR[s.source] ?? "#374151", whiteSpace: "nowrap" }}>
+                    {s.source}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {s.schedule}
+                    {s.cron && (
+                      <>
+                        <br />
+                        <code style={{ color: "#94a3b8", fontSize: 11 }}>{s.cron}</code>
+                      </>
+                    )}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {last ? (
+                      <>
+                        <span style={{ color: STATUS_COLOR[last.status], fontWeight: 600 }}>
+                          {STATUS_LABEL[last.status] ?? last.status}
+                        </span>
+                        <br />
+                        <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                          {new Date(last.started_at).toLocaleString("ko-KR")}
+                        </span>
+                      </>
+                    ) : (
+                      <span style={{ color: "#aaa" }}>이력 없음</span>
+                    )}
+                  </td>
+                  <td style={{ textAlign: "center" }}>
+                    {/* 수동 업로드로 들어오는 데이터는 돌릴 배치가 없다 — 버튼도 두지 않는다. */}
+                    {s.runnable ? (
+                      <button
+                        onClick={() => handleTrigger(s.job_name)}
+                        disabled={triggeringJob !== null || running}
+                      >
+                        {running ? "실행 중..." : triggeringJob === s.job_name ? "요청 중..." : "지금 실행"}
+                      </button>
+                    ) : (
+                      <span style={{ color: "#aaa", fontSize: 12 }}>화면에서 업로드</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
         {error && <p style={{ color: "crimson" }}>{error}</p>}
       </section>
 

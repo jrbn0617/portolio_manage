@@ -6,6 +6,7 @@ import DataViewPage from "./pages/DataViewPage";
 import BatchesPage from "./pages/BatchesPage";
 import IndexMembersPage from "./pages/IndexMembersPage";
 import MonthlyFundamentalsPage from "./pages/MonthlyFundamentalsPage";
+import DataSourcePanel from "./components/DataSourcePanel";
 
 function App() {
   return (
@@ -20,6 +21,7 @@ function App() {
           <NavLink to="/monthly-fundamentals">월간 펀더멘털</NavLink>
           <NavLink to="/batches">배치 관리</NavLink>
         </nav>
+        <DataSourcePanel />
       </header>
 
       <main>

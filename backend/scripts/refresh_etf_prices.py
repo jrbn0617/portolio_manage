@@ -49,6 +49,7 @@ from app.models.market_holiday import MarketHoliday  # noqa: E402
 from app.models.price import Price  # noqa: E402
 from app.models.raw_close import RawClose  # noqa: E402
 from app.services.derived_prices import recompute_dividend_adjusted, recompute_monthly_bar  # noqa: E402
+from app.services.market_calendar import resolve_batch_status  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 
 REQUEST_DELAY_SEC = 3
@@ -237,6 +238,7 @@ def run(trigger: str = "manual", start=None, dry_run: bool = False) -> str:
         batch.error = f"{exc}\n{traceback.format_exc()}"
     finally:
         sys.stdout = real
+        status = resolve_batch_status(db, status)
         batch.status = status
         batch.log = buf.getvalue()
         batch.finished_at = datetime.datetime.now(datetime.timezone.utc)
