@@ -17,8 +17,8 @@
 
 | 파일 | 내용 |
 |---|---|
-| `allocation1-overview.md` | 배분 #1 스펙 (아직 없음 — 알고리즘 정의 후 생성) |
-| `allocation1-experiments.md` | 배분 #1 실험 로그 (같음) |
+| `allocation1-overview.md` | **배분 #1 — 경기 사이클 스위치.** 스펙·이식 검증 |
+| `allocation1-experiments.md` | 배분 #1 실험 로그 (아직 없음) |
 
 새 배분 알고리즘 문서는 `docs/algorithms/algorithm1-overview.md` 의 1~6 섹션 구조
 (개요 → 전략 로직 → 파라미터 → 백테스트 성과 → 실험 히스토리 → 한계)를 따르고, 상세

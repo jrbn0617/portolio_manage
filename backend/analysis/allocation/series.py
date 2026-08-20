@@ -112,3 +112,31 @@ if __name__ == "__main__":
         print(f"월말(전종목) {len(full):>6,}행  {full.index[0].date()} ~ {full.index[-1].date()}")
     finally:
         db.close()
+
+
+def load_macro(db, names: list[str], start: date | None = None,
+               end: date | None = None) -> pd.DataFrame:
+    """월간 매크로 지표 (index=date, columns=indicator_name).
+
+    `macro_indicators` 의 날짜는 적재 시점에 이미 월말로 통일돼 있다
+    (app/services/macro_sources.py). 여기서 다시 밀지 않는다.
+    """
+    sql = "SELECT indicator_name, date, value FROM macro_indicators WHERE indicator_name = ANY(:n)"
+    params: dict = {"n": list(names)}
+    if start:
+        sql += " AND date >= :s"
+        params["s"] = start
+    if end:
+        sql += " AND date <= :e"
+        params["e"] = end
+    rows = db.execute(text(sql), params).all()
+    if not rows:
+        raise RuntimeError(f"매크로 지표가 없습니다: {', '.join(names)}")
+    df = pd.DataFrame(rows, columns=["name", "date", "value"])
+    df["value"] = df["value"].astype(float)
+    out = df.pivot(index="date", columns="name", values="value").sort_index()
+    out.index = pd.to_datetime(out.index)
+    missing = [n for n in names if n not in out.columns]
+    if missing:
+        raise RuntimeError(f"적재되지 않은 지표: {', '.join(missing)}")
+    return out[list(names)]
