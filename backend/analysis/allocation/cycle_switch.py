@@ -22,10 +22,12 @@
   python analysis/allocation/cycle_switch.py                 # 최근 상태와 목표비중
   python analysis/allocation/cycle_switch.py --risk 1
   python analysis/allocation/cycle_switch.py --from 2020-01-01 --history
+  python analysis/allocation/cycle_switch.py --backtest      # MP1/2/3 + BM 성과
 """
 import argparse
 import itertools
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -35,6 +37,7 @@ sys.path.insert(0, str(BACKEND))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.db.session import SessionLocal  # noqa: E402
+from backtest import Engine  # noqa: E402
 from series import load_macro, load_series, monthly  # noqa: E402
 
 # 원본 티커 → 우리 티커. 비율 1.00000 으로 동일함을 확인한 것들이다(금 제외).
@@ -48,6 +51,10 @@ TICKER_MAP = {
     "USBIL": "LD20TRUU",         # T-Bill
 }
 MACRO = ["M2NS", "FINRA_MARGIN_DEBT", "DGS10"]
+
+# 벤치마크 — 원본과 같은 ACWI 60 / Global-Agg 40. 이 둘은 목표비중에는 안 쓰인다.
+BM_MAP = {"MSCIACWINTR": "NDUEACWF", "BBGAGG": "LEGATRUU"}
+BM_WEIGHTS = {"MSCIACWINTR": 0.6, "BBGAGG": 0.4}
 
 UNIVERSE = dict(
     stock=["SPXNTR", "MSCIEAFENTR", "MSCIEMNTR"],
@@ -223,6 +230,48 @@ def gen_mp(cycle_data_df: pd.DataFrame, risk: int = 0, freq: str = "QE",
     return asset_allocation(saa_df, risk)
 
 
+def load_backtest_prices(db, start=None, end=None) -> pd.DataFrame:
+    """백테스트용 일별 가격. 컬럼명은 원본 티커.
+
+    **합집합 캘린더 + 직전값 이월(ffill)** 을 쓴다 — 원본 `get_price` 와 같다. 금은
+    거의 매일 값이 있고 미국물은 미국 휴장일에 비므로, 안 채우면 그날 포트폴리오가
+    통째로 빈다. 채우면 그 자산의 그날 수익률이 0이 되어 변동성이 아주 조금
+    과소추정되는데, 그건 감수한다(자산배분 성과 비교에는 영향이 미미하다).
+    """
+    ours = [TICKER_MAP[t] for t in TICKER_MAP] + list(BM_MAP.values())
+    back = {v: k for k, v in {**TICKER_MAP, **BM_MAP}.items()}
+    px = load_series(db, ours).rename(columns=back)
+
+    # **가장 늦게까지 있는 계열에 맞추지 않는다.** 금은 거의 매일, 미국물은 하루 늦게
+    # 들어오므로 ffill 하고 끝까지 쓰면 마지막 며칠이 이월값이 된다. 원본 산출물이
+    # 실제로 그 상태였다(2026-06-30 의 미국물이 06-29 값). 모든 계열에 실제 값이
+    # 있는 마지막 날에서 자른다.
+    last_real = min(px[c].last_valid_index() for c in px.columns)
+    px = px.loc[:last_real].ffill()
+    return px.loc[start:end].dropna(how="any")
+
+
+def run_backtest(cost: float = 0.001, start="2007-12-31", end=None, freq: str = "QE"):
+    """원본과 같은 구성 — MP1(risk0)·MP2(risk1)·MP3(risk2) + 벤치마크."""
+    db = SessionLocal()
+    try:
+        econ, undl = read_economic_data(db), read_underlying_price(db)
+        cycle = calc_cycle_data(econ, undl)
+        px = load_backtest_prices(db, start, end)
+    finally:
+        db.close()
+
+    end = end or px.index[-1]
+    ports = {f"MP{r + 1}": gen_mp(cycle, risk=r, freq=freq, start=start, end=end)
+             for r in (0, 1, 2)}
+    ports["BM"] = pd.DataFrame(index=pd.date_range(start, end, freq=freq),
+                               data=BM_WEIGHTS)
+
+    t = time.perf_counter()
+    res = Engine(px, cost=cost).run_many(ports)
+    return px, res, (time.perf_counter() - t) * 1000
+
+
 def build(risk: int = 0, start=None, end=None, freq: str = "QE"):
     db = SessionLocal()
     try:
@@ -241,7 +290,26 @@ if __name__ == "__main__":
     p.add_argument("--to", dest="end", default=None)
     p.add_argument("--freq", default="QE", help="리밸런싱 주기 (기본 분기말)")
     p.add_argument("--history", action="store_true", help="전체 이력 출력")
+    p.add_argument("--backtest", action="store_true", help="MP1/2/3 + BM 백테스트")
+    p.add_argument("--cost", type=float, default=0.001, help="편도 거래비용 (기본 0.1%%)")
     a = p.parse_args()
+
+    if a.backtest:
+        px, res, engine_ms = run_backtest(a.cost, a.start or "2007-12-31", a.end, a.freq)
+        print(f"{px.index[0].date()} ~ {px.index[-1].date()}  "
+              f"{len(px):,}일 × {px.shape[1]}자산 · 비용 {a.cost:.2%}")
+        print(f"엔진 {engine_ms:.1f} ms (포트폴리오 4개, 데이터 로딩 제외)\n")
+        cols = ["cagr", "annualized_volatility", "sharpe", "mdd", "turnover_pa"]
+        head = f"{'':<5}{'CAGR':>9}{'변동성':>10}{'샤프':>8}{'MDD':>9}{'회전율':>9}"
+        print(head)
+        print("-" * len(head))
+        for name in ["MP1", "MP2", "MP3", "BM"]:
+            m = res["stats"].loc[name, cols]
+            print(f"{name:<5}{m['cagr']:>8.2%}{m['annualized_volatility']:>10.2%}"
+                  f"{m['sharpe']:>8.2f}{m['mdd']:>9.1%}{m['turnover_pa']:>9.1%}")
+        print("\nNAV 는 첫날 매수비용을 반영해 100 미만에서 시작한다"
+              f" ({res['nav'].iloc[0, 0]:.2f}).")
+        raise SystemExit(0)
 
     cycle, mp = build(a.risk, a.start, a.end, a.freq)
     label = {"stock": "주식", "gold": "금", "bond": "채권"}
