@@ -12,5 +12,6 @@ openpyxl==3.1.5
 lxml==5.3.0
 xlrd==2.0.1
 python-multipart==0.0.20
+requests==2.34.2  # FRED/FINRA 수집 — pykrx 로 딸려오지만 직접 쓴다
 pykrx==1.2.8
 playwright==1.62.0

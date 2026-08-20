@@ -20,6 +20,7 @@ KOFIA = "KOFIA 전자공시"
 SEIBRO = "SEIBRO"
 BBG = "블룸버그 터미널"
 DATAGUIDE = "DataGuide"
+MACRO = "FRED / FINRA"
 MANUAL = "수동 업로드"
 
 
@@ -96,6 +97,14 @@ JOBS: dict[str, Job] = {
             " 밀린 구간을 따라잡을 때만 오래 걸리고 평상시에는 1요청이다."
             " 공시가 늦어 빈 응답을 받으면 그날치는 다음 실행에서 따라잡는다",
             KOFIA, "0 11 * * 1-5", "평일 11:00", "refresh_fund_kofia.py",
+            ["--trigger", "manual"]),
+        Job("macro_monthly",
+            "월간 매크로 지표 — FRED DGS10(10년물 월평균)·M2NS(M2 통화량), FINRA 마진부채."
+            " 발표가 가장 늦은 게 FINRA(익월 중순)와 M2NS(익월 4주차)라 매월 25일에 돈다."
+            " 세 계열 다 400행 미만이라 매번 전 구간을 다시 받아 덮어쓴다 — M2 는 사후"
+            " 개정이 있어 증분으로 이어붙이면 과거가 틀어진 채 남는다."
+            " 한 계열이 실패해도 나머지는 적재한다",
+            MACRO, "0 7 25 * *", "매월 25일 07:00", "refresh_macro_monthly.py",
             ["--trigger", "manual"]),
         Job("monthly_fundamentals_upload",
             "재무·유동비율 등 월간 펀더멘털. DataGuide 요청 양식으로 받아 화면에서 올린다"
