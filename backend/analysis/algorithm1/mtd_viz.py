@@ -1,13 +1,18 @@
-"""알고리즘 #1 월중(MTD) 성과 시각화. 읽기 전용.
+"""알고리즘 #1 월중(MTD) 성과 시각화 — 전일 종가 기준. 읽기 전용.
 
-재현 로직은 `mtd_performance.py`의 `build()`·`stock_paths()`를 그대로 쓴다 —
-표와 그림이 어긋나지 않도록 원천을 한 곳에 둔다.
+재현 로직·기준일 규칙은 `mtd_performance.py`를 그대로 쓴다 — 표와 그림이 어긋나지
+않도록 원천을 한 곳에 둔다.
 
-벤치마크는 18:30 배치가 채우므로 종목 시세보다 하루 짧을 수 있다. 그때는
-**두 계열을 같은 날까지 자른 값**을 초과성과로 쓰고, 포트폴리오만 최신일까지
-연장해 그린다(그림에서 벤치마크 선이 먼저 끝난다).
+**매일 돌리는 것을 전제로 한다.** 기준일은 전 영업일, 형성일은 그 직전 월말 거래일을
+자동으로 잡으므로 달이 바뀌어도 손댈 게 없다. 같은 날 몇 번을 돌려도 결과가 같다.
 
-사용법:  python analysis/algorithm1/mtd_viz.py [YYYY-MM-DD(형성일)]
+벤치마크가 그래도 하루 짧을 수 있다(지수 배치가 밀린 경우). 그때는 **두 계열을 같은
+날까지 자른 값**을 초과성과로 쓰고, 포트폴리오만 기준일까지 연장해 그린다.
+
+사용법:
+  python analysis/algorithm1/mtd_viz.py                     # 전 영업일 기준
+  python analysis/algorithm1/mtd_viz.py --as-of 2026-08-18  # 기준일 지정
+  python analysis/algorithm1/mtd_viz.py --today             # 당일 종가까지
 """
 import json
 import os
@@ -19,7 +24,9 @@ from sqlalchemy import text
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from mtd_performance import bm_return, build, stock_paths  # noqa: E402
+from mtd_performance import (  # noqa: E402
+    bm_return, build, parse_args, resolve_window, stock_paths,
+)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -29,8 +36,8 @@ SP = Path(os.environ.get("ALGO_OUT",
                     Path(__file__).resolve().parents[3] / "reference" / "analysis"))
 SP.mkdir(parents=True, exist_ok=True)
 
-FORM = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else date(2026, 7, 31)
-ctx = build(FORM)
+FORM, AS_OF = resolve_window(parse_args())
+ctx = build(FORM, AS_OF)
 days = list(ctx.tdays)
 rows = stock_paths(ctx, ctx.end)
 
@@ -141,9 +148,11 @@ secbars = "".join(
     f'<div class="bar"><i style="width:{v/D["sectors"][0][1]*100:.1f}%"></i></div>'
     f'<b class="num">{v*100:.1f}%</b></div>' for k, v in D["sectors"])
 
+bmcap = "" if match["aligned"] else (
+    f"코스피 총수익 계열은 {D['last_bm']}까지만 수신돼 먼저 끝난다. ")
 bmwarn = "" if match["aligned"] else f"""
-<p class="warn">벤치마크(코스피 총수익)는 {D['last_bm']}까지만 수신됐다 — 지수 배치는 평일
-18:30에 돌고, 직전 영업일 실행이 실패했다. 초과성과는 <b>두 계열이 모두 있는
+<p class="warn">벤치마크(코스피 총수익)는 {D['last_bm']}까지만 수신됐다 — 지수 배치(평일
+18:30)가 기준일치를 아직 채우지 못했다. 초과성과는 <b>두 계열이 모두 있는
 {md(match['date'])}까지</b>로만 계산했고, 그림에서 코스피 선이 먼저 끝나는 이유도 같다.</p>"""
 
 CSS = """
@@ -152,18 +161,21 @@ CSS = """
   --navy:#1e3a5f; --good:#2c6e54; --warn:#96650f; --alert:#a8332b;
   --rule:#e3e7ec; --rule2:#eef1f5; --band:#eef2f7;
   --goodbg:#e7f2ec; --warnbg:#faf1de; --alertbg:#fbeae8; --line:#1e3a5f; --line2:#9aa5b4;
+  --bm:#a8641f;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --ground:#13161c; --card:#1a1e26; --ink:#e7eaef; --ink2:#c2c9d4; --muted:#8b95a4;
   --navy:#8fb4dd; --good:#63b48d; --warn:#d1a24a; --alert:#e0736a;
   --rule:#2a303a; --rule2:#232831; --band:#20252e;
   --goodbg:#1a2c25; --warnbg:#2c2618; --alertbg:#2e1e1d; --line:#8fb4dd; --line2:#6b7686;
+  --bm:#d99a55;
 }}
 :root[data-theme="dark"]{
   --ground:#13161c; --card:#1a1e26; --ink:#e7eaef; --ink2:#c2c9d4; --muted:#8b95a4;
   --navy:#8fb4dd; --good:#63b48d; --warn:#d1a24a; --alert:#e0736a;
   --rule:#2a303a; --rule2:#232831; --band:#20252e;
   --goodbg:#1a2c25; --warnbg:#2c2618; --alertbg:#2e1e1d; --line:#8fb4dd; --line2:#6b7686;
+  --bm:#d99a55;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--ground);color:var(--ink);
@@ -201,8 +213,10 @@ canvas{width:100%;height:auto;display:block}
 figcaption{font-size:11.5px;color:var(--muted);margin-top:10px;padding-top:9px;
   border-top:1px solid var(--rule2)}
 .legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12px;color:var(--ink2);margin-bottom:10px}
-.legend i{display:inline-block;width:15px;height:3px;border-radius:2px;
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;
   vertical-align:middle;margin-right:6px}
+.legend i.dash{border-radius:0;background:repeating-linear-gradient(
+  to right, var(--line2) 0 4px, transparent 4px 7px)}
 
 .scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 table{border-collapse:collapse;width:100%;font-size:13px;background:var(--card)}
@@ -278,7 +292,7 @@ function lineChart(){
     g.stroke(); g.restore();};
 
   draw(D.nav_nostop, css('--line2'), 1.4, [4,3]);
-  draw(D.bm,         css('--muted'), 2);
+  draw(D.bm,         css('--bm'),    2);
   draw(D.nav,        css('--line'),  2.8);
 
   // 손절 실행일 표시
@@ -293,7 +307,7 @@ function lineChart(){
     g.fillStyle=color; g.beginPath(); g.arc(X(i),Y(arr[i]),3.5,0,7); g.fill();
     g.font='700 12px ui-monospace,monospace'; g.textAlign='right'; g.textBaseline='bottom';
     g.fillText(fmt(arr[i]),X(i)-6,Y(arr[i])-6);};
-  tip(D.bm,css('--muted')); tip(D.nav,css('--line'));
+  tip(D.bm,css('--bm')); tip(D.nav,css('--line'));
 }
 
 function contribChart(){
@@ -324,13 +338,14 @@ new MutationObserver(()=>{lineChart();contribChart();})
 matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>{lineChart();contribChart();});
 """
 
-html = f"""<title>알고리즘 #1 · 2026년 8월 월중 성과</title>
+title = f"{ctx.end.year}년 {ctx.end.month}월 월중 성과"
+html = f"""<title>알고리즘 #1 · {title}</title>
 <style>{CSS}</style>
 <div class="wrap">
 <header>
   <p class="kicker">Algorithm #1 · Month-to-date</p>
-  <h1>2026년 8월 월중 성과</h1>
-  <p class="sub">7월 말 형성한 포트폴리오를 다음 정기 리밸런싱까지 그대로 들고 가는 구간이다.
+  <h1>{title}</h1>
+  <p class="sub">{FORM.month}월 말 형성한 포트폴리오를 다음 정기 리밸런싱까지 그대로 들고 가는 구간이다.
   아래 수치는 모두 배당을 반영한 총수익 기준이며, 거래비용은 형성 시점에 이미 반영돼 있다.</p>
   <div class="meta">
     <span>형성일 <b>{D['form']}</b></span>
@@ -350,12 +365,11 @@ html = f"""<title>알고리즘 #1 · 2026년 8월 월중 성과</title>
 <figure>
   <div class="legend">
     <span><i style="background:var(--line)"></i>포트폴리오</span>
-    <span><i style="background:var(--muted)"></i>코스피 총수익</span>
-    <span><i style="background:var(--line2)"></i>손실 제한 미적용 가정</span>
+    <span><i style="background:var(--bm)"></i>코스피 총수익</span>
+    <span><i class="dash"></i>손실 제한 미적용 가정</span>
   </div>
   <canvas id="c1"></canvas>
-  <figcaption>코스피 총수익 계열은 {D['last_bm']}까지만 수신돼 먼저 끝난다.
-  세로 점선은 손실 제한에 따른 청산일이다.</figcaption>
+  <figcaption>{bmcap}세로 점선은 손실 제한에 따른 청산일이다.</figcaption>
 </figure>
 
 <h2><span class="n">02</span>종목별 기여도</h2>

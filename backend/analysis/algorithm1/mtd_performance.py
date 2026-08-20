@@ -1,19 +1,28 @@
-"""직전 형성일 포트폴리오의 월중(MTD) 성과 — 오늘 종가까지. 읽기 전용.
+"""직전 형성일 포트폴리오의 월중(MTD) 성과 — 전일 종가 기준. 읽기 전용.
 
 리밸런싱 사이의 경과 성과를 보는 용도다. 엔진과 같은 규칙을 적용한다.
   - 비중: 형성일 산출값(유동시총 연동 + 종목 25%/업종 50%/업종당 2종목 한도)
   - 손실 제한: 형성가 대비 -10% 도달 시 **익영업일 시가** 청산, 이후 현금 보유
   - 시장 국면: 형성일 판정 노출을 월중 유지 (엔진의 월중 재판정은 별도)
 
-주의 — 벤치마크(코스피 총수익)는 `prices.close`(ticker='KOSPI')이고 이 값은
-평일 18:30 `refresh_benchmark_indices_bbg` 배치가 채운다. 장중이나 18:30 이전에
-돌리면 **종목 시세보다 하루 짧다.** 그 경우 두 구간을 맞춘 비교를 함께 출력한다.
+**기준일은 기본값이 전 영업일이다** — 매일 돌려도 같은 날 두 번 돌리면 같은 결과가
+나와야 하기 때문이다. 당일 종가를 쓰면 언제 돌렸느냐에 따라 값이 달라진다: 장중에는
+미완성 종가가 섞이고, 코스피 총수익은 평일 18:30 `refresh_benchmark_indices_bbg` 배치가
+채우므로 그 전에는 아예 없다. 하루 물리면 양쪽이 모두 확정돼 있다.
 
-사용법:  python analysis/algorithm1/mtd_performance.py [YYYY-MM-DD(형성일)]
+형성일도 기본값이 자동이다 — 기준일 직전의 월말 거래일을 찾는다. 리밸런싱이 월 1회라
+달이 바뀌면 형성일도 따라 바뀌어야 하는데, 고정해 두면 매달 손으로 고쳐야 한다.
+
+사용법:
+  python analysis/algorithm1/mtd_performance.py                    # 전 영업일 기준
+  python analysis/algorithm1/mtd_performance.py --as-of 2026-08-18 # 기준일 지정
+  python analysis/algorithm1/mtd_performance.py --form 2026-07-31  # 형성일 지정
+  python analysis/algorithm1/mtd_performance.py --today            # 당일 종가까지 (확정 전일 수 있음)
 
 시각화는 `mtd_viz.py`가 이 모듈의 `build()`·`stock_paths()`를 그대로 써서 만든다 —
 표와 그림이 어긋나지 않도록 재현 로직은 여기 한 곳에만 둔다.
 """
+import argparse
 import sys
 from datetime import date
 from types import SimpleNamespace
@@ -41,13 +50,54 @@ DISPLAY = {"000660": "SK하이닉스", "028050": "삼성E&A",
 STOP_LOSS = 0.10
 
 
-def build(form: date) -> SimpleNamespace:
-    """형성일 포트폴리오를 재현한다 — 편입 종목·비중·노출·거래일."""
+def resolve_as_of(db, as_of: date | None = None, include_today: bool = False) -> date:
+    """기준일 = 요청일 이하의 마지막 거래일. 기본은 **오늘을 뺀** 마지막 거래일이다.
+
+    달력으로 어제를 계산하지 않는 이유 — 주말·휴장일을 직접 다뤄야 하고, 거래일이어도
+    시세 적재가 실패했으면 빈 날이 된다. 실제 시세가 있는 날 중에서 고르면 둘 다 걸리지 않는다.
+    """
+    sql = "SELECT MAX(date) FROM prices WHERE period='D' AND date <= :d"
+    if as_of is None:
+        as_of = date.today()
+        if not include_today:
+            sql = "SELECT MAX(date) FROM prices WHERE period='D' AND date < :d"
+    d = db.execute(text(sql), {"d": as_of}).scalar()
+    if d is None:
+        raise RuntimeError(f"{as_of} 이전 시세가 없습니다.")
+    return d
+
+
+def resolve_formation(db, as_of: date) -> date:
+    """형성일 = 기준일 직전의 월말 거래일. 전략이 월 1회 리밸런싱이라 이게 직전 형성일이다.
+
+    기준일이 그달 말일이면 그날 형성한 포트폴리오는 아직 하루도 안 지났으므로 한 달 더
+    거슬러 간다(경과 0거래일짜리 리포트를 만들지 않는다).
+    """
+    # **진행 중인 달은 빼야 한다** — 그러지 않으면 이번 달의 마지막 거래일(=며칠 전)이
+    # 월말로 잡혀서 형성일이 며칠 전이 된다. 실제로 그렇게 나왔다: 8/19 기준에 8/18.
+    d = db.execute(text("""
+        SELECT MAX(m) FROM (
+            SELECT MAX(date) AS m FROM prices
+            WHERE period='D' AND date < date_trunc('month', CAST(:d AS date))
+            GROUP BY date_trunc('month', date)) t"""), {"d": as_of}).scalar()
+    if d is None:
+        raise RuntimeError(f"{as_of} 이전 월말 거래일을 찾지 못했습니다.")
+    return d
+
+
+def build(form: date, as_of: date | None = None) -> SimpleNamespace:
+    """형성일 포트폴리오를 재현한다 — 편입 종목·비중·노출·거래일.
+
+    as_of 를 주면 그날까지만 본다. 안 주면 시세가 있는 마지막 날(=당일 포함)이라
+    호출부에서 resolve_as_of() 로 먼저 정해 넘기는 것을 기본으로 한다.
+    """
     db = SessionLocal()
     last_px = db.execute(text("SELECT MAX(date) FROM prices WHERE period='D'")).scalar()
     last_bm = db.execute(text("""SELECT MAX(p.date) FROM prices p JOIN instruments i ON i.id=p.instrument_id
                                  WHERE i.ticker='KOSPI' AND p.period='D'""")).scalar()
-    end = last_px
+    end = as_of or last_px
+    # 기준일까지 실제로 받은 벤치마크 — 기준일을 물려도 지수 배치가 밀렸으면 여전히 짧다
+    last_bm = min(last_bm, end) if last_bm else last_bm
 
     uni = resolve_universe(db, "KOSPI", form)
     tradable = [i for i in uni if i not in find_halted_instruments(db, uni, form, 10)]
@@ -126,9 +176,36 @@ def bm_return(ctx, end: date):
     return (v[end] / v[ctx.form] - 1.0) if len(v) == 2 else None
 
 
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(description="알고리즘 #1 월중 성과 (기본: 전 영업일 종가 기준)")
+    p.add_argument("form_pos", nargs="?", metavar="YYYY-MM-DD",
+                   help="형성일 (구버전 호환 — --form 과 같다)")
+    p.add_argument("--form", type=date.fromisoformat, default=None,
+                   help="형성일. 생략하면 기준일 직전 월말 거래일")
+    p.add_argument("--as-of", dest="as_of", type=date.fromisoformat, default=None,
+                   help="기준일. 생략하면 전 영업일")
+    p.add_argument("--today", action="store_true",
+                   help="당일 종가까지 본다 (장중이면 미확정, 벤치마크는 18:30 이후)")
+    a = p.parse_args(argv)
+    if a.form is None and a.form_pos:
+        a.form = date.fromisoformat(a.form_pos)
+    return a
+
+
+def resolve_window(args) -> tuple[date, date]:
+    """(형성일, 기준일). 스크립트마다 같은 규칙을 쓰도록 여기 한 곳에 둔다."""
+    db = SessionLocal()
+    try:
+        as_of = resolve_as_of(db, args.as_of, include_today=args.today)
+        return (args.form or resolve_formation(db, as_of)), as_of
+    finally:
+        db.close()
+
+
 def main():
-    form = date.fromisoformat(sys.argv[1]) if len(sys.argv) > 1 else date(2026, 7, 31)
-    ctx = build(form)
+    args = parse_args()
+    form, as_of = resolve_window(args)
+    ctx = build(form, as_of)
     END = ctx.end
 
     print(f"형성일 {form}  →  {END}  ({len([d for d in ctx.tdays if d > form])}거래일)")
