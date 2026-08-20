@@ -47,8 +47,11 @@ RULES = {
                   category_in=["주식형", "주식파생형"], name_not_in=["혼합"]),
     "EAFE":  dict(undl="NDDUEAFE", krw=True,  lag=[1, 2], corr_cut=0.70, rank="return",
                   category_in=["주식형", "주식파생형", "재간접형"], name_not_in=["혼합"]),
+    # region 을 해외로 묶는 이유 — 한국이 MSCI EM 구성국이라 국내 주식형 펀드가 상관
+    # 0.78 로 통과한다. 그러면 EM 과 KR 슬리브가 같은 펀드를 집어 익스포저가 겹친다.
     "EM":    dict(undl="NDUEEGF",  krw=True,  lag=1,      corr_cut=0.75, rank="return",
-                  category_in=["주식형", "주식파생형", "재간접형"], name_not_in=["혼합"]),
+                  category_in=["주식형", "주식파생형", "재간접형"], name_not_in=["혼합"],
+                  region_in=["해외"]),
     "KR":    dict(undl="KOSPI2T",  krw=False, lag=1,      corr_cut=0.90, rank="return",
                   category_in=["주식형", "주식파생형"], name_not_in=["혼합"]),
     "GOLD":  dict(undl="XAU",      krw=True,  lag=1,      corr_cut=0.70, rank="return",
@@ -151,6 +154,8 @@ def apply_filters(info: pd.DataFrame, rule: dict) -> pd.DataFrame:
     f = info
     if rule.get("category_in"):
         f = f[f["category"].isin(rule["category_in"])]
+    if rule.get("region_in"):
+        f = f[f["region"].isin(rule["region_in"])]
     if rule.get("name_in"):
         f = f[f["name"].str.contains("|".join(rule["name_in"]), regex=True, na=False)]
     if rule.get("name_not_in"):
