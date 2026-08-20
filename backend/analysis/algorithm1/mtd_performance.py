@@ -24,7 +24,7 @@
 """
 import argparse
 import sys
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 from pathlib import Path
@@ -56,12 +56,18 @@ def resolve_as_of(db, as_of: date | None = None, include_today: bool = False) ->
     달력으로 어제를 계산하지 않는 이유 — 주말·휴장일을 직접 다뤄야 하고, 거래일이어도
     시세 적재가 실패했으면 빈 날이 된다. 실제 시세가 있는 날 중에서 고르면 둘 다 걸리지 않는다.
     """
-    sql = "SELECT MAX(date) FROM prices WHERE period='D' AND date <= :d"
+    # **주식만 본다.** prices 에는 해외지수·금도 들어 있어 전체 MAX 를 잡으면 한국
+    # 휴장일이 딸려 온다(2026-08-17 대체휴일에 LEGATRUU·XAU 등 8종이 값을 갖는다).
+    # 종목별 MAX 를 LATERAL 로 구해 합치는 이유는 속도다 — 큰 테이블 인덱스가 전부
+    # (instrument_id, date, ...) 라 date 선행 조건은 풀스캔이 된다. 실측 426ms → 17ms.
+    op = "<=" if (as_of is not None or include_today) else "<"
     if as_of is None:
         as_of = date.today()
-        if not include_today:
-            sql = "SELECT MAX(date) FROM prices WHERE period='D' AND date < :d"
-    d = db.execute(text(sql), {"d": as_of}).scalar()
+    d = db.execute(text(f"""
+        SELECT MAX(s.m) FROM instruments i CROSS JOIN LATERAL (
+            SELECT MAX(p.date) m FROM prices p
+            WHERE p.instrument_id = i.id AND p.period = 'D' AND p.date {op} :d) s
+        WHERE i.asset_type = 'stock'"""), {"d": as_of}).scalar()
     if d is None:
         raise RuntimeError(f"{as_of} 이전 시세가 없습니다.")
     return d
@@ -75,14 +81,14 @@ def resolve_formation(db, as_of: date) -> date:
     """
     # **진행 중인 달은 빼야 한다** — 그러지 않으면 이번 달의 마지막 거래일(=며칠 전)이
     # 월말로 잡혀서 형성일이 며칠 전이 된다. 실제로 그렇게 나왔다: 8/19 기준에 8/18.
-    d = db.execute(text("""
-        SELECT MAX(m) FROM (
-            SELECT MAX(date) AS m FROM prices
-            WHERE period='D' AND date < date_trunc('month', CAST(:d AS date))
-            GROUP BY date_trunc('month', date)) t"""), {"d": as_of}).scalar()
-    if d is None:
-        raise RuntimeError(f"{as_of} 이전 월말 거래일을 찾지 못했습니다.")
-    return d
+    #
+    # 거래일 판정은 prices 가 아니라 market_holidays 로 한다 — 엔진의 리밸런싱 날짜와
+    # 같은 원천이어야 형성일이 어긋나지 않고, prices 에 섞인 해외 거래일도 안 걸린다.
+    prev_month_end = as_of.replace(day=1) - timedelta(days=1)
+    days = get_trading_days(db, prev_month_end.replace(day=1), prev_month_end)
+    if not days:
+        raise RuntimeError(f"{prev_month_end:%Y-%m} 에 거래일이 없습니다.")
+    return days[-1]
 
 
 def build(form: date, as_of: date | None = None) -> SimpleNamespace:
