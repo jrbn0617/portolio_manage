@@ -7,6 +7,7 @@ import BatchesPage from "./pages/BatchesPage";
 import IndexMembersPage from "./pages/IndexMembersPage";
 import MonthlyFundamentalsPage from "./pages/MonthlyFundamentalsPage";
 import FundsPage from "./pages/FundsPage";
+import IndicesPage from "./pages/IndicesPage";
 import DataSourcePanel from "./components/DataSourcePanel";
 
 type Tab = { to: string; end?: boolean; label: string };
@@ -47,6 +48,7 @@ function App() {
           <NavLink to="/stocks">주식</NavLink>
           <NavLink to="/etf">ETF</NavLink>
           <NavLink to="/funds">펀드</NavLink>
+          <NavLink to="/indices">지수</NavLink>
           <span className="navgap" />
           <NavLink to="/upload">데이터 업로드</NavLink>
           <NavLink to="/batches">배치 관리</NavLink>
@@ -71,6 +73,7 @@ function App() {
           </Route>
 
           <Route path="/funds" element={<FundsPage />} />
+          <Route path="/indices" element={<IndicesPage />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/batches" element={<BatchesPage />} />
 

@@ -17,6 +17,7 @@ from app.models.short_selling import ShortSelling  # noqa: E402,F401
 from app.models.index_market_cap import IndexMarketCap  # noqa: E402,F401
 from app.models.corporate_action_event import CorporateActionEvent  # noqa: E402,F401
 from app.models.monthly_fundamental import MonthlyFundamental  # noqa: E402,F401
+from app.models.bbg_index import BbgIndex  # noqa: E402,F401
 from app.models.fund import (  # noqa: E402,F401
     Fund, FundAdjustedNav, FundNav, FundSettlement,
 )

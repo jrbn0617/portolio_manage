@@ -79,8 +79,10 @@ JOBS: dict[str, Job] = {
             SEIBRO, "0 18 * * 1-5", "평일 18:00", "load_etf_dividends_seibro.py",
             ["--trigger", "manual"]),
         Job("benchmark_indices_bbg",
-            "벤치마크 지수 전 구간(2014~) 재수신·교체. 배당포인트가 사후 정정되므로 증분이 아니라"
-            " 통째로 갈아끼운다. 사내 블룸버그 PC에 SSH로 붙으므로 그 PC가 꺼져 있으면 실패한다",
+            "블룸버그 지수·환율 갱신. **수집 대상과 요청 방식은 지수관리 화면(bbg_indices)이 정한다**"
+            " — 코스피 계열은 배당포인트가 사후 정정되므로 전 구간(2014~)을 통째로 갈아끼우고,"
+            " 이미 총수익으로 나오는 해외지수·환율은 마지막 적재일 다음날부터만 받는다."
+            " 사내 블룸버그 PC에 SSH로 붙으므로 그 PC가 꺼져 있으면 실패한다",
             BBG, "30 18 * * 1-5", "평일 18:30", "refresh_benchmark_indices_bbg.py",
             ["--trigger", "manual"]),
         Job("shares_outstanding_pykrx",

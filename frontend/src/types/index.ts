@@ -231,3 +231,41 @@ export interface FundStats {
 }
 
 export type FundKind = "manage" | "class" | "all";
+
+export interface BbgIndex {
+  id: number;
+  bbg_ticker: string;
+  ticker: string;
+  name: string;
+  note: string | null;
+  refresh_mode: "daily" | "full";
+  fields: string;
+  compute_tr: boolean;
+  start_date: string | null;
+  enabled: boolean;
+  sort_order: number;
+  rows: number;
+  first_dt: string | null;
+  last_dt: string | null;
+  last_value: number | null;
+  updated_at: string | null;
+}
+
+export interface BbgIndexUpdate {
+  name?: string;
+  note?: string | null;
+  refresh_mode?: "daily" | "full";
+  start_date?: string | null;
+  enabled?: boolean;
+  sort_order?: number;
+}
+
+export interface BbgIndexCreate {
+  bbg_ticker: string;
+  ticker: string;
+  name: string;
+  note?: string | null;
+  refresh_mode?: "daily" | "full";
+  start_date?: string | null;
+  sort_order?: number;
+}

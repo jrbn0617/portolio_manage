@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import (
     batches,
+    bbg_indices,
     data_sources,
     dividend_adjusted_prices,
     dividends,
@@ -37,6 +38,7 @@ app.include_router(uploads.router)
 app.include_router(batches.router)
 app.include_router(data_sources.router)
 app.include_router(funds.router)
+app.include_router(bbg_indices.router)
 
 
 @app.get("/health")
