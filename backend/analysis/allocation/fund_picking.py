@@ -162,7 +162,16 @@ def apply_filters(info: pd.DataFrame, rule: dict) -> pd.DataFrame:
     return f
 
 
-def pick(universe_codes: list[str], base: str, classes=None) -> dict:
+def pick(universe_codes: list[str], base: str, classes=None, exclusive: bool = True) -> dict:
+    """자산군별 선정. exclusive 면 **한 펀드가 두 슬리브에 들어가지 않는다**.
+
+    지수끼리 상관이 높으면 같은 펀드가 여러 자산군의 컷을 동시에 통과한다 — 실제로
+    KR30Y·KR10Y 가 같은 글로벌 채권펀드를 1위로 뽑았다. 그러면 배분이 겹쳐 의도한
+    익스포저가 나오지 않는다.
+
+    **RULES 의 정의 순서대로 뽑고 이미 뽑힌 펀드는 뒤 자산군에서 뺀다.** 순서가 곧
+    우선권이라 좁은 자산군을 앞에 둔다(KR30Y 가 KR10Y 보다 앞).
+    """
     base_dt = pd.Timestamp(base)
     start = base_dt - pd.offsets.Week(WEEKS + 1)
 
@@ -180,11 +189,13 @@ def pick(universe_codes: list[str], base: str, classes=None) -> dict:
         info = info.loc[info.index.intersection(full)]
         nav = nav[info.index]
 
-        result = {}
+        result, taken = {}, set()
         for name, rule in RULES.items():
             if classes and name not in classes:
                 continue
             cand = apply_filters(info, rule)
+            if exclusive and taken:
+                cand = cand.loc[~cand.index.isin(taken)]
             if cand.empty:
                 result[name] = dict(rule=rule, table=pd.DataFrame(), picked=None,
                                     reason="필터 통과 펀드 없음")
@@ -201,8 +212,10 @@ def pick(universe_codes: list[str], base: str, classes=None) -> dict:
             reason = None
             if tgt is None and rule["corr_cut"] is not None:
                 reason = "참조 지수 미적재 — 상관 필터를 적용하지 못했다"
-            result[name] = dict(rule=rule, table=tbl, reason=reason,
-                                picked=(tbl.index[0] if len(tbl) else None))
+            picked = tbl.index[0] if len(tbl) else None
+            if picked is not None:
+                taken.add(picked)
+            result[name] = dict(rule=rule, table=tbl, reason=reason, picked=picked)
         return result
     finally:
         db.close()
@@ -214,11 +227,13 @@ if __name__ == "__main__":
     p.add_argument("--base", default=None, help="기준일 (기본: 최근 월말)")
     p.add_argument("--show", type=int, default=5, help="자산군별 상위 N개 출력")
     p.add_argument("--only", action="append", help="특정 자산군만")
+    p.add_argument("--allow-dup", action="store_true",
+                   help="한 펀드가 여러 자산군에 중복 선정되는 것을 허용")
     a = p.parse_args()
 
     base = a.base or (pd.Timestamp.today() - pd.offsets.MonthEnd(1)).strftime("%Y-%m-%d")
     codes = load_universe(a.universe)
-    res = pick(codes, base, a.only)
+    res = pick(codes, base, a.only, exclusive=not a.allow_dup)
 
     print(f"기준일 {base} · 유니버스 {len(codes):,}개 · 최근 {WEEKS}주\n")
     for name, r in res.items():
@@ -239,3 +254,11 @@ if __name__ == "__main__":
             print(f"   {mark} corr {c:>6} {lg:<3} 수익 {row['return']:>7.2%} "
                   f"샤프 {row['sharpe']:>5.2f}  {row['fund_code']}  {row['name'][:44]}")
         print()
+
+    print("── 선정 결과 ──")
+    for name, r in res.items():
+        if r["picked"] is None:
+            print(f"   {name:<6} —")
+            continue
+        row = r["table"].loc[r["picked"]]
+        print(f"   {name:<6} {row['fund_code']}  {row['name'][:50]}")
