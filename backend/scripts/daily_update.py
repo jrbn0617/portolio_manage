@@ -490,11 +490,38 @@ def fetch_short_selling(db, day: datetime.date, instruments_by_ticker: dict[str,
     print(f"  {day} 공매도 거래량/거래대금 {len(rows)}건")
 
 
+def _underfilled_days(db, trading_days: list[datetime.date], ratio: float = 0.5) -> set:
+    """거래일인데 주식 시세가 정상 규모로 들어오지 않은 날.
+
+    last_date(MAX) 만으로는 못 잡는다 — **한 종목이라도 있으면 그 날은 적재 완료로
+    보이기 때문이다.** 실측 2026-08-20 은 권리락 재수집으로 16종목만 들어와 MAX 가
+    8/20 이 되었고, 정작 2,650종목이 통째로 비어 있었는데 배치는 성공으로 끝났다.
+    종목 수를 세면 이런 날이 걸린다. 정상일에는 빈 집합이라 추가 호출이 없다.
+    """
+    if not trading_days:
+        return set()
+    counts = dict(db.query(Price.date, func.count(Price.instrument_id))
+                  .join(Instrument, Instrument.id == Price.instrument_id)
+                  .filter(Price.period == "D", Instrument.asset_type == "stock",
+                          Price.date >= min(trading_days))
+                  .group_by(Price.date).all())
+    if not counts:
+        return set()
+    full = max(counts.values())
+    return {d for d in trading_days if counts.get(d, 0) < full * ratio}
+
+
 def main() -> dict:
     """일일 갱신을 실행하고 요약 dict를 반환한다 (BatchRun.summary로 저장됨)."""
     db = SessionLocal()
 
-    last_date = db.query(func.max(Price.date)).filter(Price.period == "D").scalar()
+    # **주식만 본다.** prices 에는 ETF·해외지수·환율도 들어 있어 전체 MAX 를 잡으면
+    # 한국 주식이 아직 하나도 안 들어온 날이 "적재 완료"로 보인다. 실측 — 2026-08-20 은
+    # 새벽 벤치마크 배치가 XAU·USDKRW 의 당일치를 넣어 두는 바람에 last_date 가 8/20 이
+    # 되었고, fetch_days 가 비어 그날 주식 시세를 통째로 건너뛰었다(배치는 성공으로 종료).
+    last_date = (db.query(func.max(Price.date))
+                 .join(Instrument, Instrument.id == Price.instrument_id)
+                 .filter(Price.period == "D", Instrument.asset_type == "stock").scalar())
     if last_date is None:
         raise RuntimeError("prices에 기존 데이터가 없습니다. 먼저 벌크 적재를 수행하세요.")
 
@@ -513,6 +540,10 @@ def main() -> dict:
     fetch_days = {d for d in trading_days if d > last_date}
     if prev_trading_day is not None:
         fetch_days.add(prev_trading_day)
+    thin = _underfilled_days(db, trading_days)
+    if thin:
+        print(f"주식 시세가 비어 있는 거래일 {len(thin)}건 추가: {sorted(thin)}")
+        fetch_days |= thin
     missing = sorted(fetch_days)
 
     if not missing:
