@@ -57,12 +57,11 @@ RULES = {
     "GOLD":  dict(undl="XAU",      krw=True,  lag=1,      corr_cut=0.70, rank="return",
                   category_in=["주식형", "주식파생형", "특별자산", "재간접형"],
                   name_in=["골드"]),
-    # 참조 지수가 아직 없다 — KR30YTR·KR10YTR·KRCD91TR 은 우리 DB 에 미적재.
-    "KR30Y": dict(undl=None, krw=False, lag=1, corr_cut=0.90, rank="return",
+    "KR30Y": dict(undl="KIS30Y",   krw=False, lag=1,      corr_cut=0.90, rank="return",
                   category_in=["채권형", "재간접형"], name_not_in=["주식"]),
-    "KR10Y": dict(undl=None, krw=False, lag=1, corr_cut=0.90, rank="return",
+    "KR10Y": dict(undl="KIS10Y",   krw=False, lag=1,      corr_cut=0.90, rank="return",
                   category_in=["채권형", "재간접형"], name_not_in=["주식"]),
-    "MMF":   dict(undl=None, krw=False, lag=1, corr_cut=0.70, rank="return",
+    "MMF":   dict(undl="KISCD",    krw=False, lag=1,      corr_cut=0.70, rank="return",
                   category_in=["단기금융(MMF)"]),
     # 추종할 지수가 없다 — 이름으로 고르고 위험 대비 수익으로 줄 세운다.
     "LS":    dict(undl=None, krw=False, lag=1, corr_cut=None, rank="sharpe",

@@ -22,6 +22,7 @@ BBG = "블룸버그 터미널"
 DATAGUIDE = "DataGuide"
 MACRO = "FRED / FINRA"
 KOFR = "FRED / KOFR"
+KIS = "KIS채권평가"
 MANUAL = "수동 업로드"
 
 
@@ -98,6 +99,14 @@ JOBS: dict[str, Job] = {
             " 밀린 구간을 따라잡을 때만 오래 걸리고 평상시에는 1요청이다."
             " 공시가 늦어 빈 응답을 받으면 그날치는 다음 실행에서 따라잡는다",
             KOFIA, "0 11 * * 1-5", "평일 11:00", "refresh_fund_kofia.py",
+            ["--trigger", "manual"]),
+        Job("kis_indices",
+            "국내 채권지수 — KIS10Y(10년 국고채)·KIS30Y(국고채30년)·KISCD(CD 총수익)."
+            " kis-net.kr 실시간지수정보(화면 1130)를 일자별(flag=1)로 부른다. 매번 전"
+            " 구간(2015~)을 다시 받아 덮어쓴다 — 지수당 2,900행에 요청 1회씩이라 배치가"
+            " 며칠 밀려도 다음 실행이 메운다. 2015 이전은 backfill_kr_bond_indices.py 로"
+            " 채웠다(소스 DB). 장 마감 뒤 확정되므로 오후에 돈다",
+            KIS, "10 16 * * 1-5", "평일 16:10", "refresh_kis_indices.py",
             ["--trigger", "manual"]),
         Job("macro_daily",
             "일별 매크로 지표 — FRED SOFRINDEX, KOFR KOFRINDEX. 매번 전 구간(2018~)을 다시 받아"
