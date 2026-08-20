@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.db.session import SessionLocal  # noqa: E402
 from backtest import Engine  # noqa: E402
-from series import load_macro, load_series, monthly  # noqa: E402
+from series import load_macro, load_riskfree, load_series, monthly  # noqa: E402
 
 # 원본 티커 → 우리 티커. 비율 1.00000 으로 동일함을 확인한 것들이다(금 제외).
 TICKER_MAP = {
@@ -258,6 +258,8 @@ def run_backtest(cost: float = 0.001, start="2007-12-31", end=None, freq: str = 
         econ, undl = read_economic_data(db), read_underlying_price(db)
         cycle = calc_cycle_data(econ, undl)
         px = load_backtest_prices(db, start, end)
+        # 자산이 전부 미국 지수라 SOFR 를 쓴다. 국내 펀드·ETF 였다면 KOFR 다.
+        rf = load_riskfree(db, "US")
     finally:
         db.close()
 
@@ -268,7 +270,7 @@ def run_backtest(cost: float = 0.001, start="2007-12-31", end=None, freq: str = 
                                data=BM_WEIGHTS)
 
     t = time.perf_counter()
-    res = Engine(px, cost=cost).run_many(ports)
+    res = Engine(px, cost=cost, riskfree=rf).run_many(ports)
     return px, res, (time.perf_counter() - t) * 1000
 
 
@@ -299,14 +301,16 @@ if __name__ == "__main__":
         print(f"{px.index[0].date()} ~ {px.index[-1].date()}  "
               f"{len(px):,}일 × {px.shape[1]}자산 · 비용 {a.cost:.2%}")
         print(f"엔진 {engine_ms:.1f} ms (포트폴리오 4개, 데이터 로딩 제외)\n")
-        cols = ["cagr", "annualized_volatility", "sharpe", "mdd", "turnover_pa"]
-        head = f"{'':<5}{'CAGR':>9}{'변동성':>10}{'샤프':>8}{'MDD':>9}{'회전율':>9}"
+        head = (f"{'':<5}{'CAGR':>9}{'초과':>9}{'변동성':>10}"
+                f"{'샤프(rf)':>10}{'샤프':>8}{'MDD':>9}{'회전율':>9}")
         print(head)
-        print("-" * len(head))
+        print("-" * (len(head) - 4))
         for name in ["MP1", "MP2", "MP3", "BM"]:
-            m = res["stats"].loc[name, cols]
-            print(f"{name:<5}{m['cagr']:>8.2%}{m['annualized_volatility']:>10.2%}"
+            m = res["stats"].loc[name]
+            print(f"{name:<5}{m['cagr']:>8.2%}{m['excess_cagr']:>9.2%}"
+                  f"{m['annualized_volatility']:>10.2%}{m['sharpe_rf']:>10.2f}"
                   f"{m['sharpe']:>8.2f}{m['mdd']:>9.1%}{m['turnover_pa']:>9.1%}")
+        print(f"\n무위험수익률 SOFR 지수 · 연 {res['stats'].iloc[0]['riskfree_cagr']:.2%}")
         print("\nNAV 는 첫날 매수비용을 반영해 100 미만에서 시작한다"
               f" ({res['nav'].iloc[0, 0]:.2f}).")
         raise SystemExit(0)

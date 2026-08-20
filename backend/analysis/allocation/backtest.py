@@ -34,9 +34,16 @@ TRADING_DAYS = 252
 
 
 # ── 지표 ────────────────────────────────────────────────────────────────────
-def metrics(nav: pd.Series) -> dict:
-    """`backtest_service._compute_metrics` 와 같은 정의. 트랙 간 수치를 비교하려면
-    정의가 하나여야 한다."""
+def metrics(nav: pd.Series, riskfree: pd.Series | None = None) -> dict:
+    """수익·위험 지표.
+
+    **무위험수익률을 주면 샤프를 초과수익 기준으로 잰다.** 어느 것을 줄지는 자산이
+    정한다 — 국내 펀드·ETF 면 KOFR, 미국 지수·ETF 면 SOFR(`series.load_riskfree`).
+    통화가 다른 자산에 남의 무위험수익률을 빼면 초과수익이 환율만큼 왜곡된다.
+
+    riskfree 를 안 주면 `backtest_service._compute_metrics` 와 같아진다 — 이 리포의
+    주식 트랙이 무위험이자율 미반영이라 비교하려면 그 형태도 필요하다.
+    """
     nav = nav.dropna()
     if len(nav) < 2:
         return {}
@@ -46,8 +53,7 @@ def metrics(nav: pd.Series) -> dict:
 
     vol = r.std(ddof=1) * np.sqrt(TRADING_DAYS) if len(r) > 1 else np.nan
     peak = np.maximum.accumulate(v)
-
-    return dict(
+    out = dict(
         cumulative_return=v[-1] / v[0] - 1,
         cagr=(v[-1] / v[0]) ** (1 / years) - 1 if years > 0 else np.nan,
         annualized_volatility=vol,
@@ -55,6 +61,23 @@ def metrics(nav: pd.Series) -> dict:
         mdd=(v / peak - 1).min(),
         years=years,
     )
+
+    if riskfree is not None:
+        # 무위험수익률 지수를 NAV 캘린더에 맞춰 일별 수익률로 바꾼다. 지수가 없는 날은
+        # 직전 값을 이어 0% 로 둔다 — 없는 날에 이자가 붙었다고 보지 않는다.
+        rf = riskfree.reindex(nav.index.union(riskfree.index)).ffill().reindex(nav.index)
+        rf_r = rf.pct_change().to_numpy()[1:]
+        rf_r = np.nan_to_num(rf_r)
+        excess = r - rf_r
+        ex_vol = excess.std(ddof=1) * np.sqrt(TRADING_DAYS) if len(excess) > 1 else np.nan
+        rf_cagr = (1 + rf_r).prod() ** (1 / years) - 1 if years > 0 else np.nan
+        out.update(
+            riskfree_cagr=rf_cagr,
+            excess_cagr=out["cagr"] - rf_cagr,
+            # 샤프는 정의상 초과수익의 평균/표준편차다. 분모도 초과수익으로 잰다.
+            sharpe_rf=(excess.mean() * TRADING_DAYS / ex_vol) if ex_vol else np.nan,
+        )
+    return out
 
 
 # ── 엔진 ────────────────────────────────────────────────────────────────────
@@ -64,7 +87,8 @@ class Engine:
     cost 는 실수 하나이거나 {자산: 비율, 'base': 기본값} 딕셔너리다.
     """
 
-    def __init__(self, price_df: pd.DataFrame, cost: float | dict = 0.0):
+    def __init__(self, price_df: pd.DataFrame, cost: float | dict = 0.0,
+                 riskfree: pd.Series | None = None):
         if not price_df.index.is_monotonic_increasing:
             price_df = price_df.sort_index()
         self.index = price_df.index
@@ -72,6 +96,7 @@ class Engine:
         # NaN 을 0 수익으로 둔다 — 상장 전 구간이나 휴장일을 '움직이지 않음'으로 본다.
         self.returns = price_df.pct_change().fillna(0).to_numpy(dtype=float)
         self.cost = self._resolve_cost(cost)
+        self.riskfree = riskfree
 
     def _resolve_cost(self, cost) -> np.ndarray | float:
         if not isinstance(cost, dict):
@@ -140,7 +165,7 @@ class Engine:
 
         rows = {}
         for name, r in detail.items():
-            m = metrics(r["nav"])
+            m = metrics(r["nav"], self.riskfree)
             # 원본 turnover 는 |Δw| 의 합이라 매수·매도를 모두 센다. 연 단위 편도로
             # 환산해 둔다 — 회전율을 말할 때 보통 쓰는 단위다.
             m["turnover_pa"] = (r["turnover"] / 2) / m["years"] if m.get("years") else np.nan
@@ -168,8 +193,8 @@ class Engine:
 
 
 def run_backtest(price_df: pd.DataFrame, port_dict: dict, cost: float | dict = 0.0,
-                 period: tuple | None = None) -> dict:
+                 period: tuple | None = None, riskfree: pd.Series | None = None) -> dict:
     """한 번만 돌릴 때 쓰는 얇은 껍데기. 반복 실행은 Engine 을 직접 쓴다."""
     if period:
         price_df = price_df.loc[pd.Timestamp(period[0]):pd.Timestamp(period[1])]
-    return Engine(price_df, cost).run_many(port_dict)
+    return Engine(price_df, cost, riskfree).run_many(port_dict)

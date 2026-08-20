@@ -140,3 +140,21 @@ def load_macro(db, names: list[str], start: date | None = None,
     if missing:
         raise RuntimeError(f"적재되지 않은 지표: {', '.join(missing)}")
     return out[list(names)]
+
+
+# 무위험수익률 — 국내 자산이면 KOFR, 미국 자산이면 SOFR 를 쓴다.
+# 둘 다 복리 누적 지수라 pct_change 가 곧 일별 무위험수익률이다.
+RISKFREE = {"KR": "KOFRINDEX", "US": "SOFRINDEX"}
+
+
+def load_riskfree(db, market: str = "US", start: date | None = None,
+                  end: date | None = None) -> pd.Series:
+    """무위험수익률 지수. market 은 'KR' 또는 'US'.
+
+    **어느 쪽을 쓸지는 자산이 정한다** — 국내 펀드·ETF 면 KOFR, 미국 지수·ETF 면 SOFR.
+    통화가 다른 자산에 남의 무위험수익률을 빼면 초과수익이 환율만큼 왜곡된다.
+    """
+    name = RISKFREE.get(market.upper())
+    if name is None:
+        raise ValueError(f"market 은 {list(RISKFREE)} 중 하나여야 합니다: {market}")
+    return load_macro(db, [name], start, end)[name]

@@ -24,7 +24,7 @@ ALGO_OUT=/tmp/out venv/bin/python analysis/algorithm1/mtd_viz.py
 
 ---
 
-## HTML 보고서 3종
+## HTML 보고서 4종
 
 ### 1. 월중(MTD) 성과 — `algorithm1/mtd_viz.py`
 
@@ -61,7 +61,26 @@ venv/bin/python analysis/algorithm1/mtd_viz.py --today             # 당일 종�
 `resolve_as_of()` · `resolve_formation()` 을 그대로 부른다. 콘솔 숫자만 필요하면
 `mtd_performance.py` 를 같은 인자로 돌리면 된다(HTML 없음).
 
-### 2. 사내 제안서 — `algorithm1/build_proposal.py`
+### 2. 배분 #1 개요·성과 — `allocation/cycle_switch_report.py`
+
+경기 사이클 스위치 전략의 개요와 성과 분석. 스펙은 `docs/allocation/allocation1-overview.md`.
+
+```bash
+venv/bin/python analysis/allocation/cycle_switch_report.py
+venv/bin/python analysis/allocation/cycle_switch_report.py --from 1999-12-31 --cost 0.002
+```
+
+| | |
+|---|---|
+| 산출 | `cycle_switch.json` · `cycle_switch.html` |
+| 입력 | DB 직접 조회 (`prices` + `macro_indicators`) |
+| 내용 | 현재 국면 · 누적/낙폭 · 스위치 28년 타임라인 · 국면별 성과 · 연도별 · 배분 추이 |
+
+계산은 `cycle_switch.py`(신호·비중)와 `backtest.py`(엔진)를 그대로 부른다 — 리포트가
+따로 계산하지 않으므로 표와 그림이 어긋나지 않는다. HTML 생성만 `cycle_switch_html.py`
+로 나눠 뒀다.
+
+### 3. 사내 제안서 — `algorithm1/build_proposal.py`
 
 A4 인쇄를 전제로 한 알고리즘 제안서. 브라우저 인쇄로 PDF를 뽑는다.
 
@@ -90,7 +109,7 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 로직 노출 수준은 "기법명까지만"이다. 임계치·기간·순위 규칙은 쓰지 않는다 —
 `docs/algorithm-specs/00-작성규칙.md` 와 `00-변환가이드.md` 를 먼저 읽을 것.
 
-### 3. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
+### 4. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
 
 실험 22(워크포워드) · 23(손절 8% 검토) 결과 시각화.
 
@@ -117,6 +136,7 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 | 스크립트 | 산출 | 용도 |
 |---|---|---|
 | `algorithm1/mtd_performance.py` | 콘솔 | 월중 성과 숫자만. `mtd_viz.py` 의 계산 원천 |
+| `allocation/cycle_switch.py --backtest` | 콘솔 | 배분 #1 성과 요약 |
 | `algorithm1/walkforward.py` | `walkforward.json` | 시간분할 재추정 (실험 22) |
 | `algorithm1/stoploss_8_vs_10.py` | `stop8v10.json` | 손절 8% vs 10% (실험 23, 기각) |
 | `algorithm1/ops_stats.py` | `ops_stats.json` | 손절 건수·거래비용 |
@@ -134,6 +154,6 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
    HTML을 손볼 때마다 백테스트를 다시 돌리지 않아도 되고, 수치를 손으로 옮기다 틀리는 일도
    없어진다. 짧은 것은 `mtd_viz.py` 처럼 한 파일에 둬도 된다.
 2. **산출 경로는 `ALGO_OUT` 규약을 따른다** (위 공통 사항의 3줄을 그대로 복사).
-3. **JSON을 만드는 쪽도 반드시 리포에 넣는다.** 위 3번이 그래서 막혔다.
+3. **JSON을 만드는 쪽도 반드시 리포에 넣는다.** 위 4번이 그래서 막혔다.
 4. HTML을 아티팩트로 게시하면 링크로 공유·재열람이 된다. 스크립트를 다시 돌리면 파일이
    갱신되므로, 같은 파일 경로로 다시 게시하면 같은 링크가 유지된다.
