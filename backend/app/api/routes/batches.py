@@ -21,6 +21,7 @@ SEIBRO = "SEIBRO"
 BBG = "블룸버그 터미널"
 DATAGUIDE = "DataGuide"
 MACRO = "FRED / FINRA"
+KOFR = "FRED / KOFR"
 MANUAL = "수동 업로드"
 
 
@@ -97,6 +98,13 @@ JOBS: dict[str, Job] = {
             " 밀린 구간을 따라잡을 때만 오래 걸리고 평상시에는 1요청이다."
             " 공시가 늦어 빈 응답을 받으면 그날치는 다음 실행에서 따라잡는다",
             KOFIA, "0 11 * * 1-5", "평일 11:00", "refresh_fund_kofia.py",
+            ["--trigger", "manual"]),
+        Job("macro_daily",
+            "일별 매크로 지표 — FRED SOFRINDEX, KOFR KOFRINDEX. 매번 전 구간(2018~)을 다시 받아"
+            " 덮어쓴다 — 각 2,100행 안팎에 요청은 1회씩이라, 배치가 며칠 밀려도 다음 실행이"
+            " 알아서 메운다. KOFR 공시가 오전 10시 50분경이라 오후에 돈다."
+            " 2018 이전 구간은 backfill_underlying_index.py 로 채웠다(소스 DB)",
+            KOFR, "0 15 * * 1-5", "평일 15:00", "refresh_macro_daily.py",
             ["--trigger", "manual"]),
         Job("macro_monthly",
             "월간 매크로 지표 — FRED DGS10(10년물 월평균)·M2NS(M2 통화량), FINRA 마진부채."

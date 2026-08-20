@@ -8,6 +8,11 @@
 | `DGS10`             | 미국 10년 국채금리 **월평균**      | 퍼센트      | FRED  |
 | `M2NS`              | 미국 M2 통화량 (계절조정 없음)     | 십억 달러   | FRED  |
 | `FINRA_MARGIN_DEBT` | 고객 증거금계좌 차변잔고(마진부채) | 백만 달러   | FINRA |
+| `SOFRINDEX`         | SOFR 지수 (2018-04-02 = 1)        | 지수        | FRED  |
+| `KOFRINDEX`         | KOFR 지수 (2018-01-02 = 1,000)    | 지수        | KOFR  |
+
+**월간과 일별을 나눠 둔다** — `MONTHLY_COLLECTORS` 는 매월 25일, `DAILY_COLLECTORS` 는
+평일 배치가 쓴다. 날짜 정렬 규칙이 다르다: 월간은 월말로 밀고, 일별은 관측일 그대로다.
 
 **날짜는 전부 그 달의 마지막 날로 통일한다.** FRED 월간 시계열은 관측월 1일로 오고
 (2026-07-01) FINRA 는 'YYYY-MM' 문자열로 온다. 섞어 두면 지수 데이터(월말 기준)와
@@ -20,6 +25,7 @@ import calendar
 import datetime
 import io
 import os
+import re
 
 import pandas as pd
 import requests
@@ -37,8 +43,12 @@ def month_end(d: datetime.date) -> datetime.date:
     return d.replace(day=calendar.monthrange(d.year, d.month)[1])
 
 
-def fetch_fred(series_id: str, start: str = "1990-01-01", **params) -> list[tuple]:
-    """FRED 월간 관측치 → [(월말 date, value)].
+def fetch_fred(series_id: str, start: str = "1990-01-01",
+               align_month_end: bool = True, **params) -> list[tuple]:
+    """FRED 관측치 → [(date, value)].
+
+    align_month_end 는 월간 계열용이다. 일별 계열(SOFRINDEX 등)에 적용하면 같은 달의
+    모든 날이 월말 하나로 뭉개져 마지막 값만 남는다.
 
     결측은 '.' 으로 오고(휴장·미발표) 그대로 두면 float 변환에서 터진다 — 걸러낸다.
     """
@@ -54,7 +64,7 @@ def fetch_fred(series_id: str, start: str = "1990-01-01", **params) -> list[tupl
         if o["value"] in (".", "", None):
             continue
         d = datetime.date.fromisoformat(o["date"])
-        out.append((month_end(d), float(o["value"])))
+        out.append((month_end(d) if align_month_end else d, float(o["value"])))
     return out
 
 
@@ -118,12 +128,58 @@ def fetch_finra_margin_debt() -> list[tuple]:
     return sorted(out)
 
 
-# 배치가 도는 순서대로. (indicator_name, 설명, 수집 함수)
-COLLECTORS = [
+KOFR_URL = "https://www.kofr.kr/websquare/engine/proworks/callServletService.jsp"
+KOFR_PAGE = "https://www.kofr.kr/rate/rate.jsp"
+KOFR_BASE_DT = datetime.date(2018, 1, 2)   # 지수 기준시점 (=1,000)
+
+# 화면(WebSquare)이 실제로 보내는 요청을 그대로 쓴다. 브라우저 네트워크를 가로채 확인했다.
+# **<request> 래퍼가 없고 값이 텍스트가 아니라 속성이다** — 감으로 만든 XML 은 200 에
+# 빈 본문(39바이트)이 돌아오고 에러도 안 난다. 그래서 형식을 틀려도 알아채기 어렵다.
+KOFR_BODY = ('<reqParam action="getGridRateExcelList" task="ksd.rfr.user.rate.process.RatePTask">'
+             '<SEARCH_START_DATE value="{start}"/><SEARCH_END_DATE value="{end}"/>'
+             '<LANG value="kor"/></reqParam>')
+_KOFR_ROW = re.compile(
+    r'<RFR_PUBN_DT value="(\d{8})"/>.*?<RFR_INDEX value="\s*([\d.]+)"/>', re.S)
+
+
+def fetch_kofr_index(start: datetime.date | None = None,
+                     end: datetime.date | None = None) -> list[tuple]:
+    """KOFR 지수 → [(date, value)]. 구간을 주지 않으면 기준시점부터 오늘까지.
+
+    구간 조회가 되므로 **매번 전 구간을 받아 덮어쓴다** — 배치가 며칠 밀려도 알아서
+    메워지고, 요청은 어차피 1회다.
+
+    `www.kofr.kr` 은 이 개발 샌드박스의 DNS 에서 안 잡힌다(`kofr.kr` 은 잡히는데
+    거기서 www 로 302 한다). cron 은 샌드박스 밖이라 정상이다.
+    """
+    start = start or KOFR_BASE_DT
+    end = end or datetime.date.today()
+    body = KOFR_BODY.format(start=start.strftime("%Y%m%d"), end=end.strftime("%Y%m%d"))
+    r = requests.post(KOFR_URL, data=body.encode("utf-8"), timeout=TIMEOUT,
+                      headers={"Content-Type": "application/xml; charset=UTF-8",
+                               "Referer": KOFR_PAGE})
+    r.raise_for_status()
+    r.encoding = "utf-8"
+    out = [(datetime.date(int(m[0][:4]), int(m[0][4:6]), int(m[0][6:])), float(m[1]))
+           for m in _KOFR_ROW.findall(r.text)]
+    if not out:
+        raise RuntimeError("KOFR 응답에 행이 없습니다 — 요청 XML 형식을 확인하세요"
+                           " (빈 본문도 200 으로 옵니다).")
+    return sorted(out)
+
+
+# (indicator_name, 설명, 수집 함수)
+MONTHLY_COLLECTORS = [
     ("DGS10", "미국 10년 국채금리 월평균 (%)",
      lambda: fetch_fred("DGS10", frequency="m", aggregation_method="avg")),
     ("M2NS", "미국 M2 통화량, 계절조정 없음 (십억 달러)",
      lambda: fetch_fred("M2NS")),
     ("FINRA_MARGIN_DEBT", "고객 증거금계좌 차변잔고 (백만 달러)",
      fetch_finra_margin_debt),
+]
+
+DAILY_COLLECTORS = [
+    ("SOFRINDEX", "SOFR 지수 (2018-04-02 = 1)",
+     lambda: fetch_fred("SOFRINDEX", start="2018-01-01", align_month_end=False)),
+    ("KOFRINDEX", "KOFR 지수 (2018-01-02 = 1,000)", fetch_kofr_index),
 ]

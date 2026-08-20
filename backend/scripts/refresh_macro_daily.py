@@ -1,19 +1,21 @@
-"""월간 매크로 지표 수집 (cron 배치) — FRED DGS10·M2NS, FINRA 마진부채.
+"""일별 매크로 지표 수집 (cron 배치) — FRED SOFRINDEX, KOFR KOFRINDEX.
 
-세 계열 다 400행 미만이라 매번 전 구간을 다시 받아 덮어쓴다. M2 는 사후 개정이 있어
-증분으로 이어붙이면 과거가 틀어진 채 남는다. 지표별 정의·단위는
-`app/services/macro_sources.py` 의 표를 볼 것.
+**매번 전 구간(2018~)을 다시 받아 덮어쓴다.** 둘 다 2,100행 안팎이고 요청은 각 1회다.
+배치가 며칠 밀려도 다음 실행이 알아서 메우므로 증분 관리가 필요 없다.
 
-**한 계열이 실패해도 나머지는 적재한다.** FINRA 는 파일 양식이 바뀔 수 있고 FRED 는
-키 만료가 있어 실패 사유가 서로 무관하다. 하나라도 실패하면 배치 상태는 failed 로
-남기되, 성공한 계열은 이미 커밋돼 있다.
+2018 이전 구간은 이 배치가 만들지 못한다 — 원천이 그때부터다.
+`scripts/backfill_underlying_index.py` 가 과거를 채운다.
 
-발표 시점이 가장 늦은 게 FINRA(익월 중순)와 M2NS(익월 4주차)라 매월 25일에 돈다.
+**한 계열이 실패해도 나머지는 적재한다.** FRED 는 키 만료, KOFR 는 응답 형식 변경으로
+서로 무관하게 깨질 수 있다. 하나라도 실패하면 배치 상태는 failed 로 남기되, 성공한
+계열은 이미 커밋돼 있다.
+
+KOFR 는 공시 시각이 오전 10시 50분경이라(응답의 PUBN_DTTM 기준) 오전 배치는 피한다.
 
 사용법:
-  python scripts/refresh_macro_monthly.py --dry-run
-  python scripts/refresh_macro_monthly.py
-  python scripts/refresh_macro_monthly.py --only DGS10
+  python scripts/refresh_macro_daily.py --dry-run
+  python scripts/refresh_macro_daily.py
+  python scripts/refresh_macro_daily.py --only KOFRINDEX
 """
 import argparse
 import datetime
@@ -32,7 +34,7 @@ load_dotenv(BACKEND_DIR / ".env")
 from app.db.base import Base  # noqa: E402,F401
 from app.db.session import SessionLocal  # noqa: E402
 from app.models.macro_indicator import MacroIndicator  # noqa: E402
-from app.services.macro_sources import MONTHLY_COLLECTORS  # noqa: E402
+from app.services.macro_sources import DAILY_COLLECTORS  # noqa: E402
 
 
 def upsert(db, name: str, rows: list[tuple]) -> int:
@@ -48,7 +50,7 @@ def main(dry_run: bool, only: list[str] | None = None) -> dict:
     db = SessionLocal()
     summary, failed = {}, []
     try:
-        for name, desc, fetch in MONTHLY_COLLECTORS:
+        for name, desc, fetch in DAILY_COLLECTORS:
             if only and name not in only:
                 continue
             try:
@@ -73,7 +75,7 @@ def main(dry_run: bool, only: list[str] | None = None) -> dict:
                              "to": str(rows[-1][0]), "last": rows[-1][1],
                              "new": len(rows) - before}
             print(f"  {name:<20} {len(rows):>4,}건  {rows[0][0]} ~ {rows[-1][0]}"
-                  f"  최근값 {rows[-1][1]:>12,.2f}  (기존 {before:,}건)   {desc}")
+                  f"  최근값 {rows[-1][1]:>12,.5f}  (기존 {before:,}건)   {desc}")
 
         if dry_run:
             print("\n--dry-run 이므로 적재하지 않고 종료합니다.")
@@ -101,7 +103,7 @@ def run(trigger="manual", dry_run=False, only=None) -> str:
     from app.models.batch_run import BatchRun
 
     db = SessionLocal()
-    batch = BatchRun(job_name="macro_monthly", trigger=trigger, status="running")
+    batch = BatchRun(job_name="macro_daily", trigger=trigger, status="running")
     db.add(batch)
     db.commit()
     db.refresh(batch)
