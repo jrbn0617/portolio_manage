@@ -63,6 +63,9 @@ SERIES = [
      "블룸버그 PX_LAST 원본"),
     ("KOSPI200_TR_BBG", "KOSPI2T", "px_close", "TR (Gross)", "KRW", "KOSPI200",
      "블룸버그 공식 KOSPI2 TR. 자체 계산 대조용"),
+    ("KOSDAQ150_TR",   "KOSDAQ150", "px_close", "TR (Gross)", "KRW", "KOSDAQ150",
+     "PX_LAST + 일별 배당포인트로 자체 계산 (세전). **코스닥 계열은 블룸버그 공식 TR "
+     "티커가 없어 대조할 대상이 없다** — 코스피200 처럼 검증된 값이 아니다"),
     ("KAP종합채권_TR",   "KBPMABIN", "px_close", "TR",         "KRW", "KAP 한국종합채권지수",
      "블룸버그 KBPMABIN. 이미 총수익으로 나온다. KODEX 종합채권(273130)의 벤치마크"),
     ("USDKRW",         "USDKRW",   "px_close", "환율",       "KRW/USD", "원달러 환율",
