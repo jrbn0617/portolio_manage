@@ -13,8 +13,10 @@
   KODEX 2종        dividend_adjusted_prices.adj_close = 분배금 재투자, 첫날 100 기준.
   USDKRW           환율이라 TR 개념이 없다. 그대로 낸다.
 
-**KAP 한국종합채권지수(KBPMABIN)는 DB 에 없다.** 자리를 비워 두지 않고 메타시트에
-없다고 적는다 — 빈 칸은 "0" 이나 "아직 안 받음" 으로 오해된다.
+  KAP 종합채권      KBPMABIN. 채권지수라 PX_LAST 가 곧 총수익이다.
+
+**대용 BM 은 짝이 있어야 검증이 된다.** KODEX 200 은 KOSPI200 과, KODEX 종합채권은
+KAP 과 맞대 본다. 한쪽만 있으면 시계열은 나와도 "대용으로 쓸 만한가"에는 답할 수 없다.
 
 산출물 (reference/ 아래, gitignore 대상):
   벤치마크_TR시계열_<날짜>.xlsx   메타 · 요약 · 검증 · 검증_연도별 · 전구간 · 공통구간(100기준)
@@ -58,6 +60,8 @@ SERIES = [
      "블룸버그 PX_LAST 원본"),
     ("KOSPI200_TR_BBG", "KOSPI2T", "px_close", "TR (Gross)", "KRW", "KOSPI200",
      "블룸버그 공식 KOSPI2 TR. 자체 계산 대조용"),
+    ("KAP종합채권_TR",   "KBPMABIN", "px_close", "TR",         "KRW", "KAP 한국종합채권지수",
+     "블룸버그 KBPMABIN. 이미 총수익으로 나온다. KODEX 종합채권(273130)의 벤치마크"),
     ("USDKRW",         "USDKRW",   "px_close", "환율",       "KRW/USD", "원달러 환율",
      "TR 개념 없음. 통화 환산 검증용"),
     ("KODEX200_TR",    "069500",   "adj",      "TR (분배금 재투자)", "KRW", "KODEX 200",
@@ -66,13 +70,8 @@ SERIES = [
      "종가 기준. NAV 는 DB 에 없음"),
 ]
 
-# 요청받았으나 DB 에 없는 계열. 빈 칸 대신 이름을 남긴다.
-MISSING = [
-    ("KAP 한국종합채권지수", "KBPMABIN", "미수집",
-     "bbg_indices 에 등록돼 있지 않다. 블룸버그로 받을 수 있는 티커이므로 "
-     "등록 후 refresh_benchmark_indices_bbg.py 로 수집 가능. "
-     "현재 보유한 국내 채권지수는 KIS10Y·KIS30Y·KISCD 3종"),
-]
+# 요청받았으나 DB 에 없는 계열. 빈 칸 대신 이름을 남긴다 — 빈 칸은 0 이나 누락으로 읽힌다.
+MISSING = []
 
 SQL = {
     "px_close": """SELECT p.date, p.close AS v FROM prices p JOIN instruments i ON i.id=p.instrument_id
@@ -159,6 +158,7 @@ def main(start: datetime.date | None) -> None:
     checks = []
     for label, a, b in [
         ("KODEX 200 vs KOSPI200 TR", "KODEX200_TR", "KOSPI200_TR"),
+        ("KODEX 종합채권 vs KAP 종합채권", "KODEX종합채권_TR", "KAP종합채권_TR"),
         ("자체 KOSPI200 TR vs 블룸버그 공식", "KOSPI200_TR", "KOSPI200_TR_BBG"),
     ]:
         d = wide[[a, b]].dropna()
@@ -175,17 +175,23 @@ def main(start: datetime.date | None) -> None:
     # 연도별 분해. **일간 추적오차만 보면 대용 BM 을 과소평가한다** — KODEX 200 은 일간
     # 괴리(호가·괴리율)가 연 2%대로 커 보이지만 연간 수익률 차이는 보수 수준(0.1%p)에
     # 그친다. 둘을 나란히 놓아야 "대용으로 쓸 수 있나"에 답이 된다.
-    d = wide[["KODEX200_TR", "KOSPI200_TR"]].dropna()
-    r = d.pct_change().dropna()
-    gap = r["KODEX200_TR"] - r["KOSPI200_TR"]
-    first, last = d.groupby(d.index.year).first(), d.groupby(d.index.year).last()
-    yearly = pd.DataFrame({
-        "추적오차(연율)": gap.groupby(gap.index.year).std() * np.sqrt(252),
-        "KODEX200_TR": last["KODEX200_TR"] / first["KODEX200_TR"] - 1,
-        "KOSPI200_TR": last["KOSPI200_TR"] / first["KOSPI200_TR"] - 1,
-    })
-    yearly["수익률차"] = yearly["KODEX200_TR"] - yearly["KOSPI200_TR"]
-    yearly.index.name = "연도"
+    def by_year(etf: str, idx: str, label: str) -> pd.DataFrame:
+        d = wide[[etf, idx]].dropna()
+        gap = d[etf].pct_change().dropna() - d[idx].pct_change().dropna()
+        first, last = d.groupby(d.index.year).first(), d.groupby(d.index.year).last()
+        t = pd.DataFrame({
+            "비교": label,
+            "추적오차(연율)": gap.groupby(gap.index.year).std() * np.sqrt(252),
+            "ETF": last[etf] / first[etf] - 1,
+            "지수": last[idx] / first[idx] - 1,
+        })
+        t["수익률차"] = t["ETF"] - t["지수"]
+        t.index.name = "연도"
+        return t.reset_index()
+
+    yearly = pd.concat([by_year("KODEX200_TR", "KOSPI200_TR", "KODEX 200 vs KOSPI200"),
+                        by_year("KODEX종합채권_TR", "KAP종합채권_TR", "KODEX 종합채권 vs KAP")],
+                       ignore_index=True)
 
     miss = pd.DataFrame(MISSING, columns=["계열", "티커", "상태", "비고"])
 
@@ -198,7 +204,7 @@ def main(start: datetime.date | None) -> None:
         miss.to_excel(w, sheet_name="메타", index=False, startrow=len(meta) + 3)
         summary.to_excel(w, sheet_name="요약", index=False)
         checks.to_excel(w, sheet_name="검증", index=False)
-        yearly.to_excel(w, sheet_name="검증_연도별")
+        yearly.to_excel(w, sheet_name="검증_연도별", index=False)
         wide.to_excel(w, sheet_name="전구간")
         common.to_excel(w, sheet_name="공통구간_100기준")
 
