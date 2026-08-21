@@ -56,6 +56,10 @@ REPORTS: list[Report] = [
            "경기 사이클 스위치 전략의 국면 타임라인과 누적 성과.",
            "cycle_switch.html", "allocation1", "performance",
            "venv/bin/python analysis/allocation/cycle_switch_report.py"),
+    Report("fund_map", "배분 #1 펀드 매핑",
+           "자산군마다 그것을 대신할 공모펀드를 하나씩 고른 결과와 후보 분포.",
+           "fund_map.html", "allocation1", "document",
+           "venv/bin/python analysis/allocation/fund_map_viz.py --universe <유니버스.csv>"),
 ]
 
 BY_KEY = {r.key: r for r in REPORTS}

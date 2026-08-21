@@ -24,7 +24,7 @@ ALGO_OUT=/tmp/out venv/bin/python analysis/algorithm1/mtd_viz.py
 
 ---
 
-## HTML 보고서 5종
+## HTML 보고서 6종
 
 ### 1. 월중(MTD) 성과 — `algorithm1/mtd_viz.py`
 
@@ -111,7 +111,34 @@ venv/bin/python analysis/allocation/cycle_switch_report.py --from 1999-12-31 --c
 따로 계산하지 않으므로 표와 그림이 어긋나지 않는다. HTML 생성만 `cycle_switch_html.py`
 로 나눠 뒀다.
 
-### 4. 사내 제안서 — `algorithm1/build_proposal.py`
+### 4. 배분 #1 펀드 매핑 — `allocation/fund_map_viz.py`
+
+자산군마다 그것을 대신할 공모펀드를 하나씩 고른 결과. 지수를 직접 살 수 없으니 펀드로
+바꿔 끼우는 단계이고, 얼마나 잘 대신하는지는 기준가가 참조 지수를 따라간 정도로 잰다.
+
+```bash
+venv/bin/python analysis/allocation/fund_map_viz.py --universe <유니버스.csv>
+venv/bin/python analysis/allocation/fund_map_viz.py --universe u.csv --base 2026-07-31
+```
+
+| | |
+|---|---|
+| 산출 | `fund_map.json` · `fund_map.html` |
+| 입력 | **유니버스 CSV**(펀드코드 목록) + DB (`funds`, `fund_adjusted_navs`, `prices`) |
+| 내용 | 유니버스 깔때기 · 자산군별 선정 결과 · 후보 산점도(상관 x 수익률) · 후보 표 |
+
+**유니버스 CSV 를 인자로 받는다** — 다른 보고서와 달리 DB 만으로 돌지 않는다. 리포지토리에
+들어 있지 않으므로 경로를 알아야 한다.
+
+계산은 `fund_picking.py` 의 `pick()` 을 그대로 부른다. 리포트가 따로 계산하지 않으므로
+표와 그림이 어긋나지 않는다.
+
+**이 화면이 드러내려는 것** — 선정 규칙은 상관 하한을 넘긴 것 중 최근 1년 수익률 1등을
+고르므로, 하한 위로는 추종력을 더 보지 않는다. 산점도에서 선정 지점이 오른쪽 끝이 아닌
+슬리브가 그 경우다(실측 2026-07-31 기준 국내 주식은 41개 중 37개가 선정 펀드보다 상관이
+높았다). 슬리브의 목적이 지수 대체인지 그 자산군의 우량 펀드 찾기인지에 따라 해석이 갈린다.
+
+### 5. 사내 제안서 — `algorithm1/build_proposal.py`
 
 A4 인쇄를 전제로 한 알고리즘 제안서. 브라우저 인쇄로 PDF를 뽑는다.
 
@@ -140,7 +167,7 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 로직 노출 수준은 "기법명까지만"이다. 임계치·기간·순위 규칙은 쓰지 않는다 —
 `docs/algorithm-specs/00-작성규칙.md` 와 `00-변환가이드.md` 를 먼저 읽을 것.
 
-### 5. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
+### 6. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
 
 실험 22(워크포워드) · 23(손절 8% 검토) 결과 시각화.
 
@@ -208,6 +235,7 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 | `walkforward` | `wf_viz.html` | `algorithm1/build_wf_viz.py` |
 | `proposal` | `proposal.html` | `algorithm1/build_proposal.py` |
 | `cycle_switch` | `cycle_switch.html` | `allocation/cycle_switch_report.py` |
+| `fund_map` | `fund_map.html` | `allocation/fund_map_viz.py --universe <파일>` |
 
 **디렉터리를 통째로 정적 마운트하지 않는다** — 같은 폴더에 중간 산출 JSON 이 함께 있고,
 나중에 무엇이 더 떨어질지 모른다. 등록된 키만 내려주고 경로는 코드에서 만든다.

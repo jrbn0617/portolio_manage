@@ -181,8 +181,13 @@ def apply_filters(info: pd.DataFrame, rule: dict) -> pd.DataFrame:
     return f
 
 
-def pick(universe_codes: list[str], base: str, classes=None, exclusive: bool = True) -> dict:
+def pick(universe_codes: list[str], base: str, classes=None, exclusive: bool = True,
+         funnel: dict | None = None) -> dict:
     """자산군별 선정. exclusive 면 **한 펀드가 두 슬리브에 들어가지 않는다**.
+
+    `funnel` 에 dict 를 넘기면 단계별 남은 개수를 채워 준다. 반환값에 끼워 넣지 않는
+    이유 — 호출부가 결과를 `for name, r in res.items()` 로 순회하므로 자산군이 아닌
+    키가 섞이면 거기서 깨진다.
 
     지수끼리 상관이 높으면 같은 펀드가 여러 자산군의 컷을 동시에 통과한다 — 실제로
     KR30Y·KR10Y 가 같은 글로벌 채권펀드를 1위로 뽑았다. 그러면 배분이 겹쳐 의도한
@@ -198,15 +203,21 @@ def pick(universe_codes: list[str], base: str, classes=None, exclusive: bool = T
     try:
         info, nav, aum = load_funds(db, universe_codes, start.date(), base_dt.date())
         nav = nav.loc[:base_dt]
+        step = funnel if funnel is not None else {}
+        step["유니버스"] = len(set(universe_codes))
+        step["운용펀드"] = len(info)
 
         # 유니버스 공통 컷 — 설정액, 이름
         keep = aum[aum > MIN_AUM].index
         info = info.loc[info.index.intersection(keep)]
+        step[f"설정액 {MIN_AUM // 100:,}억 초과"] = len(info)
         info = info[~info["name"].str.contains(EXCLUDE_NAME, regex=True, na=False)]
+        step["구조 특수 제외"] = len(info)
         # 창 전체에 기준가가 있어야 수익률·상관이 성립한다
         full = nav.columns[nav.notna().all()]
         info = info.loc[info.index.intersection(full)]
         nav = nav[info.index]
+        step[f"{WEEKS}주 기준가 완비"] = len(info)
 
         grades = load_risk_grades(db, info["fund_code"].tolist())
         result, taken = {}, set()
