@@ -10,6 +10,7 @@
                    refresh_benchmark_indices_bbg.py 가 계산해 넣는다(PR 은 raw_close).
                    KOSPI200 은 블룸버그 공식 TR(KOSPI2T)이 따로 있어 대조용으로 함께 낸다.
   MSCI ACWI        NDUEACWF = Net TR, USD. **원화 환산은 여기서 만든다** (× USDKRW).
+  S&P 500          SPTR500N = Net TR, USD. 마찬가지로 원화 환산을 함께 낸다.
   KODEX 2종        dividend_adjusted_prices.adj_close = 분배금 재투자, 첫날 100 기준.
   USDKRW           환율이라 TR 개념이 없다. 그대로 낸다.
 
@@ -50,6 +51,8 @@ CSV_DIR = OUT_DIR / "benchmarks"
 SERIES = [
     ("ACWI_NTR_USD",   "NDUEACWF", "px_close", "TR (Net)", "USD", "MSCI ACWI",
      "블룸버그 NDUEACWF. 세후(Net) 총수익. Gross TR·Local 통화는 미수집"),
+    ("SP500_NTR_USD",  "SPTR500N", "px_close", "TR (Net)", "USD", "S&P 500",
+     "블룸버그 SPTR500N. 세후(Net) 총수익. Gross TR(SPTR)은 미수집"),
     ("KOSPI_TR",       "KOSPI",    "px_close", "TR (Gross)", "KRW", "KOSPI",
      "PX_LAST + INDX_GROSS_DAILY_DIV 로 자체 계산 (세전)"),
     ("KOSPI_PR",       "KOSPI",    "px_raw",   "PR",         "KRW", "KOSPI",
@@ -69,6 +72,9 @@ SERIES = [
     ("KODEX종합채권_TR", "273130",  "adj",      "TR (분배금 재투자)", "KRW", "KODEX 종합채권(AA-이상)액티브",
      "종가 기준. NAV 는 DB 에 없음"),
 ]
+
+# 원화 환산해서 함께 낼 USD 계열. (컬럼, 계열명)
+KRW_CONV = [("ACWI_NTR_USD", "MSCI ACWI"), ("SP500_NTR_USD", "S&P 500")]
 
 # 요청받았으나 DB 에 없는 계열. 빈 칸 대신 이름을 남긴다 — 빈 칸은 0 이나 누락으로 읽힌다.
 MISSING = []
@@ -122,17 +128,22 @@ def main(start: datetime.date | None) -> None:
 
     wide = pd.DataFrame(cols).sort_index()
 
-    # ACWI 원화 환산. 환율은 한국 종가, ACWI 는 미국 종가라 같은 날짜라도 시점이 다르다.
-    # 관행대로 같은 날짜끼리 곱하되 이 시차를 메타에 적어 둔다. 환율 결측일은 직전값.
+    # 원화 환산. **같은 날짜끼리 곱한다** — 이 프로젝트가 이미 쓰는 방식이다
+    # (analysis/allocation/fund_picking.py 의 target_series). 해외지수는 미국 종가,
+    # 환율은 한국 종가라 하루 안의 시점이 다르지만, 시차 보정은 비교 대상이 정해진 뒤에
+    # 거는 것이지 시계열 자체에 미리 넣지 않는다. 환율이 없는 날은 직전값을 쓴다.
     fx = wide["USDKRW"].ffill()
-    wide.insert(1, "ACWI_NTR_KRW", wide["ACWI_NTR_USD"] * fx)
-    meta.insert(1, {"컬럼": "ACWI_NTR_KRW", "계열": "MSCI ACWI", "티커": "NDUEACWF x USDKRW",
-                    "총수익구분": "TR (Net)", "통화": "KRW",
-                    "시작": wide["ACWI_NTR_KRW"].dropna().index[0].date(),
-                    "종료": wide["ACWI_NTR_KRW"].dropna().index[-1].date(),
-                    "행수": int(wide["ACWI_NTR_KRW"].notna().sum()),
-                    "비고": "USD 계열에 원달러를 곱해 이 스크립트가 산출. "
-                            "ACWI 는 미국 종가, 환율은 한국 종가라 하루 안의 시점이 다르다"})
+    src = {m["컬럼"]: m for m in meta}
+    for usd, family in KRW_CONV:
+        krw = usd.replace("_USD", "_KRW")
+        wide.insert(wide.columns.get_loc(usd) + 1, krw, wide[usd] * fx)
+        v = wide[krw].dropna()
+        meta.insert(next(i for i, m in enumerate(meta) if m["컬럼"] == usd) + 1,
+                    {"컬럼": krw, "계열": family, "티커": f"{src[usd]['티커']} x USDKRW",
+                     "총수익구분": src[usd]["총수익구분"], "통화": "KRW",
+                     "시작": v.index[0].date(), "종료": v.index[-1].date(), "행수": len(v),
+                     "비고": "USD 계열에 원달러를 같은 날짜로 곱해 이 스크립트가 산출. "
+                             "지수는 미국 종가, 환율은 한국 종가라 하루 안의 시점이 다르다"})
 
     if start:
         wide = wide[wide.index >= pd.Timestamp(start)]
@@ -201,7 +212,10 @@ def main(start: datetime.date | None) -> None:
     xlsx = OUT_DIR / f"벤치마크_TR시계열_{stamp}.xlsx"
     with pd.ExcelWriter(xlsx, engine="openpyxl", datetime_format="yyyy-mm-dd") as w:
         pd.DataFrame(meta).to_excel(w, sheet_name="메타", index=False)
-        miss.to_excel(w, sheet_name="메타", index=False, startrow=len(meta) + 3)
+        # 미수집이 없으면 아예 쓰지 않는다 — 빈 표의 머리글만 남으면 "여기 뭔가
+        # 빠졌나" 하고 다시 들여다보게 된다.
+        if len(miss):
+            miss.to_excel(w, sheet_name="메타", index=False, startrow=len(meta) + 3)
         summary.to_excel(w, sheet_name="요약", index=False)
         checks.to_excel(w, sheet_name="검증", index=False)
         yearly.to_excel(w, sheet_name="검증_연도별", index=False)
