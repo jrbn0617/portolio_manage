@@ -86,15 +86,27 @@ def _date(v):
     return datetime.datetime.strptime(s, "%Y%m%d").date() if len(s) == 8 else None
 
 
-def missing_dates(db, upto: datetime.date, max_days: int) -> list:
-    """마지막 적재일 다음 영업일부터 upto 까지. 휴장일은 건너뛴다."""
+def missing_dates(db, upto: datetime.date, max_days: int, reconfirm: bool = True) -> list:
+    """**직전 적재일 + 그 다음 영업일부터 upto 까지.** 휴장일은 건너뛴다.
+
+    직전 적재일을 다시 받는 이유 — KOFIA 는 공시 후에도 늦게 올라오는 펀드가 있다.
+    실측 2026-08-20 은 11:00 에 26,224행이었는데 다음 날 다시 부르니 26,234행이었다.
+    한 번 받은 날을 다시 안 보면 그 10행은 영영 안 들어온다. `daily_update` 가 KRX
+    정정 때문에 전영업일을 매번 재확인하는 것과 같은 이유다.
+
+    기준가 적재는 (fund_id, base_dt) 업서트라 다시 받아도 중복되지 않는다.
+    대신 **요청이 하루 1건에서 2건으로 늘어난다**(각 36MB). 요청 간격이 이 배치의
+    제약이므로 따라잡기 구간에서는 그만큼 더 걸린다.
+    """
     last = db.execute(text("SELECT MAX(base_dt) FROM fund_navs")).scalar()
     if last is None:
         raise RuntimeError("fund_navs 가 비어 있습니다 — 백필을 먼저 하세요.")
-    out, d = [], last + datetime.timedelta(days=1)
-    while d <= upto and len(out) < max_days:
+    out = [last] if (reconfirm and not is_market_holiday(db, last)) else []
+    d, fresh = last + datetime.timedelta(days=1), 0
+    while d <= upto and fresh < max_days:
         if not is_market_holiday(db, d):
             out.append(d)
+            fresh += 1
         d += datetime.timedelta(days=1)
     return out
 
@@ -277,11 +289,16 @@ def main(delay: int, max_days: int, lookback: int, dry_run: bool,
          until: datetime.date | None = None) -> dict:
     db = SessionLocal()
     raw = engine.raw_connection()
-    summary = dict(days=0, nav_rows=0, settlements=0, newly=0, recomputed=0, empty_days=[])
+    summary = dict(days=0, nav_rows=0, settlements=0, newly=0, recomputed=0,
+               empty_days=[], reconfirmed=None)
     try:
+        last_loaded = db.execute(text("SELECT MAX(base_dt) FROM fund_navs")).scalar()
         days = missing_dates(db, until or datetime.date.today(), max_days)
+        reconfirmed = bool(days) and days[0] == last_loaded
+        summary["reconfirmed"] = str(last_loaded) if reconfirmed else None
         print(f"채울 거래일 {len(days)}일: {[str(d) for d in days[:5]]}"
-              f"{' ...' if len(days) > 5 else ''}")
+              f"{' ...' if len(days) > 5 else ''}"
+              f"{f' (첫 날 {last_loaded} 은 재확인)' if reconfirmed else ''}")
         if dry_run:
             return summary
 
@@ -294,8 +311,11 @@ def main(delay: int, max_days: int, lookback: int, dry_run: bool,
             summary["nav_rows"] += n
             summary["days"] += 1
             if n == 0:
+                # 아직 공시 전이거나 휴장일이다. 다음 실행이 같은 날을 다시 집는다
+                # (MAX(base_dt) 가 안 움직이므로) — 여기서 실패로 만들 일이 아니다.
                 summary["empty_days"].append(str(d))
-            print(f"  [{i+1}/{len(days)}] {d} · 기준가 {n:,}행", flush=True)
+            tag = " (재확인)" if i == 0 and d == days[0] and reconfirmed else ""
+            print(f"  [{i+1}/{len(days)}] {d} · 기준가 {n:,}행{tag}", flush=True)
 
         if days:
             time.sleep(delay)

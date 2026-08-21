@@ -33,6 +33,24 @@ def _post(xml: str, referer: str) -> str:
     return res.text
 
 
+def _read(res: str, tag: str) -> pd.DataFrame:
+    """응답 XML 을 DataFrame 으로. **결과가 0건이면 빈 DataFrame 을 돌려준다.**
+
+    pandas 의 XML 파서는 xpath 가 아무 노드도 못 잡으면 ValueError 를 던진다. 그래서
+    "응답이 비면 호출자가 판단한다"는 규약이 실제로는 동작하지 않았다 — 아직 공시되지
+    않은 날짜를 물으면 배치가 그냥 죽었다(실측 2026-08-21 11:00, 0.12초 만에 실패).
+
+    노드가 없는 것과 응답 자체가 잘못된 것은 다르다. 후자는 그대로 터뜨린다 —
+    조용히 0건으로 넘기면 "그날은 데이터가 없다"는 틀린 결론이 남는다.
+    """
+    try:
+        return pd.read_xml(StringIO(res), xpath=f".//{tag}")
+    except ValueError as exc:
+        if "does not return any nodes" not in str(exc):
+            raise
+        return pd.DataFrame()
+
+
 def fetch_disclosure(base_dt: datetime.date | None = None, days: int = 365) -> pd.DataFrame:
     """펀드공시검색 — 자산운용보고서(공모펀드 2RF12 / MMF 2RF06) 목록.
 
@@ -68,7 +86,9 @@ def fetch_disclosure(base_dt: datetime.date | None = None, days: int = 365) -> p
 
     res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
                      "DISFundAnnSrch.xml&divisionId=MDIS01001000000000&serviceId=SDIS01001000000")
-    df = pd.read_xml(StringIO(res), xpath=".//list")
+    df = _read(res, "list")
+    if df.empty:
+        return df
     return df.rename(columns={"standardCd": "펀드코드", "uFundNm": "공시대상",
                               "koreanNm": "회사"})[["펀드코드", "공시대상", "회사"]]
 
@@ -94,7 +114,7 @@ def fetch_daily_price(base_dt: datetime.date) -> pd.DataFrame:
         </message>"""
     res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
                      "DISFundStdPrice.xml&divisionId=MDIS01004001000000&serviceId=SDIS01004001000")
-    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    df = _read(res, "selectMeta")
     if df.empty:
         return df
     df = df.rename(columns={"tmpV14": "base_dt", "tmpV12": "fund_code", "tmpV2": "name_kr",
@@ -122,7 +142,7 @@ def fetch_settlement(base_dt: datetime.date, days: int = 14) -> pd.DataFrame:
         </message>"""
     res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
                      "DISFundRdmp.xml&divisionId=MDIS01004004000000&serviceId=SDIS01004004000")
-    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    df = _read(res, "selectMeta")
     if df.empty:
         return df
     return df.rename(columns={
@@ -152,7 +172,7 @@ def fetch_newly(base_dt: datetime.date, days: int = 14) -> pd.DataFrame:
         </message>"""
     res = _post(xml, "https://dis.kofia.or.kr/websquare/index.jsp?w2xPath=/wq/fundann/"
                      "DISNewEst.xml&divisionId=MDIS01006001000000&serviceId=SDIS01006001000")
-    df = pd.read_xml(StringIO(res), xpath=".//selectMeta")
+    df = _read(res, "selectMeta")
     if df.empty:
         return df
     return df.rename(columns={
