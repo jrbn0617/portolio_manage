@@ -72,6 +72,9 @@ venv/bin/python analysis/algorithm1/monthly_viz.py             # 새로 마감�
 venv/bin/python analysis/algorithm1/monthly_viz.py --rebuild   # 전부 다시
 ```
 
+**평일 19:10 cron 으로 돈다**(월중 리포트 19:00 바로 뒤). 달이 바뀌기 전에는 캐시가 다
+차 있어 HTML 만 다시 그린다.
+
 | | |
 |---|---|
 | 산출 | `monthly_viz.json` · `monthly_viz.html` · `monthly_perf.json`(계산 캐시) |

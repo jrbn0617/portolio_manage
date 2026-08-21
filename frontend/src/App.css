@@ -200,9 +200,6 @@ table {
 .sectionnav a.active { background: var(--c-accent-solid); color: var(--c-on-accent); }
 
 /* ── 대시보드 공통 ─────────────────────────────────────────────── */
-/* index.css 의 #root 가 text-align:center 라(Vite 템플릿 잔재) 표까지 가운데로 몰린다.
-   전역을 건드리면 기존 화면이 전부 바뀌므로 대시보드 안에서만 되돌린다. */
-.dash { text-align: left; }
 .dash-head h2 { margin: 4px 0 6px; font-size: 21px; color: var(--c-head); }
 .dash-head p { margin: 0 0 20px; color: var(--c-ink-3); font-size: 13.5px; max-width: 72ch; }
 .dash-err {

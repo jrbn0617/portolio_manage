@@ -65,14 +65,38 @@ cron으로 돈 것과 여기서 수동으로 돌린 것이 구분 없이 같은 
 
 ## 자동 배치 작업
 
-매일 정해진 시각에 자동으로 실행되도록 cron에 등록돼 있다 (평일만).
+cron에 등록돼 있다. 시각은 KST이고 별도 표시가 없으면 평일만 돈다.
 
-| 작업 | 시각(KST) | 하는 일 |
+### DB에 쓰는 배치
+
+| 시각 | 작업 | 하는 일 |
 |---|---|---|
-| `daily_update` | 16:00 | KRX에서 **당일 및 직전 영업일**(정정 반영 재확인용) 가격/거래량/실제종가 수집, 상장주식수 변동(액면분할·감자 등) 감지 후 해당 종목만 재수집, 휴장일 캘린더 갱신, KOSPI/KOSDAQ 지수 편입 갱신, 월봉·배당조정지수 재계산 |
-| `dividends_seibro` | 16:30 | SEIBRO(예탁결제원)에서 최근 1주일 배당 내역(배정기준일 포함) 조회·적재, 영향받은 종목 배당조정지수 재계산 |
+| 11:00 | `refresh_fund_kofia` | 공모펀드 기준가·수정기준가 (KOFIA 전자공시) |
+| 15:00 | `refresh_macro_daily` | SOFR·KOFR 무위험수익률 지수 |
+| 16:00 | `daily_update` | KRX 가격/실제종가/상장주식수/휴장일/지수편입 — **당일 + 직전 영업일 재확인**, 월봉·배당조정지수 재계산 |
+| 16:10 | `refresh_kis_indices` | 국내 채권지수 (KIS10Y·KIS30Y·KISCD) |
+| 16:30 | `dividends_seibro` | 주식 배당 (SEIBRO, 최근 1주일) |
+| 17:00 | `refresh_short_selling` | 공매도 |
+| 17:30 | `refresh_etf_prices` | ETF 시세 (거래일당 KRX 1회) |
+| 18:00 | `load_etf_dividends_seibro` | ETF 분배금 (최근 7일 재조회) |
+| 18:30 | `refresh_benchmark_indices_bbg` | 벤치마크 지수 (블룸버그 SSH, 전 구간 재수신) |
+| 매월 1일 06:00 | `load_shares_outstanding_pykrx` | 상장주식수 |
+| 매월 25일 07:00 | `refresh_macro_monthly` | DGS10·M2NS·FINRA 마진부채 |
 
-두 작업 모두 `backend/scripts/` 아래 독립 스크립트로 존재하고(`daily_update.py`, `load_dividends_seibro.py`), cron으로 실행되든 배치 관리 화면에서 수동 실행되든 **완전히 동일한 코드 경로**를 타서 결과가 똑같이 `batch_runs` 테이블에 기록된다.
+**ETF 가격이 분배금보다 먼저 돌아야 한다** — 분배금 배치는 `instruments`에 없는 ETF를 건너뛰는데, 신규 상장 ETF 등록은 가격 배치가 한다.
+
+이 배치들은 cron으로 돌든 배치 관리 화면에서 수동으로 돌든 **완전히 동일한 코드 경로**를 타서 결과가 똑같이 `batch_runs` 테이블에 기록된다.
+
+### 리포트를 만드는 스크립트
+
+읽기 전용이라 `batch_runs`에 남지 않는다. 로그는 각자의 파일에 쌓인다.
+
+| 시각 | 스크립트 | 산출 |
+|---|---|---|
+| 19:00 | `analysis/algorithm1/mtd_viz.py` | 월중 성과 (`logs/mtd_viz.log`) |
+| 19:10 | `analysis/algorithm1/monthly_viz.py` | 월별 성과 이력 (`logs/monthly_viz.log`) |
+
+월별 쪽은 **달이 바뀌어 새로 마감된 달이 생겼을 때만** 실제 계산을 한다(캐시). 평소에는 HTML만 다시 그린다. 결과는 `/algo` 화면에서 본다.
 
 **배당(dividends)만 자동화가 부분적**이다 — SEIBRO 스크래핑은 최근 1주일치만 매일 이어붙이는 용도이고, 과거 히스토리는 별도로 준비한 파일을 업로드 화면에서 올려둔 상태다.
 
@@ -84,18 +108,22 @@ cron으로 돈 것과 여기서 수동으로 돌린 것이 구분 없이 같은 
 
 이 프로젝트를 새 환경에 설치했거나 cron 등록이 풀렸다면, 터미널에서 아래 두 줄을 실행한다.
 
+현재 등록된 전체 목록은 `crontab -l`로 확인한다. 새로 깔 때는 위 표의 시각·스크립트를 아래 형태로 옮겨 적는다.
+
 ```bash
 crontab -l 2>/dev/null > /tmp/mckim_cron.txt
 cat <<'EOF' >> /tmp/mckim_cron.txt
 0 16 * * 1-5 cd /Users/mckim/Documents/GitHub/portolio_manage/backend && venv/bin/python3 scripts/daily_update.py cron >> logs/cron.log 2>&1
-30 16 * * 1-5 cd /Users/mckim/Documents/GitHub/portolio_manage/backend && venv/bin/python3 scripts/load_dividends_seibro.py cron >> logs/cron.log 2>&1
+0 19 * * 1-5 cd /Users/mckim/Documents/GitHub/portolio_manage/backend && venv/bin/python3 analysis/algorithm1/mtd_viz.py >> logs/mtd_viz.log 2>&1
 EOF
 crontab /tmp/mckim_cron.txt
 crontab -l   # 등록 확인
 ```
 
+**cron은 환경변수가 거의 없다.** 새 줄을 넣기 전에 `env -i HOME="$HOME" PATH=/usr/bin:/bin sh -c '<그 명령>'` 로 한 번 돌려 보면, PATH나 셸 설정에 기대고 있던 스크립트를 미리 걸러낼 수 있다.
+
 - **macOS는 최초 1회 "전체 디스크 접근 권한" 팝업이 뜰 수 있다** — 터미널 앱에 권한을 허용해야 등록이 끝난다. AI 에이전트(Claude Code 등)는 이 팝업을 대신 눌러줄 수 없으므로, 이 등록 과정은 사람이 터미널에서 직접 실행해야 한다.
-- 등록 확인은 `crontab -l`로. 두 줄이 보이면 성공.
+- 등록 확인은 `crontab -l`로.
 - 이미 등록돼 있다면 `crontab -l`로 먼저 확인하고 중복 등록하지 않는다.
 
 ### 새 배치 작업을 추가하려면

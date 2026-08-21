@@ -77,9 +77,9 @@ function MoveUnderData() {
 
 function App() {
   return (
-    <div style={{ maxWidth: 1180, margin: "0 auto", padding: 24 }}>
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ marginBottom: 12 }}>포트폴리오 관리</h1>
+    <div className="app">
+      <header>
+        <h1>포트폴리오 관리</h1>
         <nav className="mainnav">
           <NavLink to="/data">데이터 관리</NavLink>
           <NavLink to="/algo">알고리즘</NavLink>
