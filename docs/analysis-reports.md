@@ -24,7 +24,7 @@ ALGO_OUT=/tmp/out venv/bin/python analysis/algorithm1/mtd_viz.py
 
 ---
 
-## HTML 보고서 4종
+## HTML 보고서 5종
 
 ### 1. 월중(MTD) 성과 — `algorithm1/mtd_viz.py`
 
@@ -61,7 +61,35 @@ venv/bin/python analysis/algorithm1/mtd_viz.py --today             # 당일 종�
 `resolve_as_of()` · `resolve_formation()` 을 그대로 부른다. 콘솔 숫자만 필요하면
 `mtd_performance.py` 를 같은 인자로 돌리면 된다(HTML 없음).
 
-### 2. 배분 #1 개요·성과 — `allocation/cycle_switch_report.py`
+### 2. 월별 성과 이력 — `algorithm1/monthly_viz.py`
+
+**마감된 달만** 모은 확정 성과. 1번이 "이번 달 지금까지"라면 이쪽은 "지난 달들이 어떻게
+끝났나"다. 진행 중인 달은 넣지 않는다 — 넣으면 며칠 뒤 같은 달 숫자가 달라져서 이력이
+아니게 된다.
+
+```bash
+venv/bin/python analysis/algorithm1/monthly_viz.py             # 새로 마감된 달만 계산
+venv/bin/python analysis/algorithm1/monthly_viz.py --rebuild   # 전부 다시
+```
+
+| | |
+|---|---|
+| 산출 | `monthly_viz.json` · `monthly_viz.html` · `monthly_perf.json`(계산 캐시) |
+| 입력 | DB 직접 조회 |
+| 내용 | 누적 곡선 · 월별 막대 · 월말 기준 낙폭 · 연도별 · 월별 상세표 |
+
+**한 달 계산에 8초쯤 걸린다**(유니버스 → 스크리닝 → 모멘텀). 그래서 `monthly_perf.py` 가
+결과를 `monthly_perf.json` 에 쌓고 새로 마감된 달만 계산한다. 처음 채울 때는 79개월
+× 8초 ≈ 11분이고, 그 뒤로는 매달 한 번씩만 실제 계산이 일어난다. 형성일·월말이 캐시와
+다르면(휴장일 정정 등) 그 달만 다시 계산한다.
+
+**홀드아웃 경계가 코드에 있다** — `monthly_perf.HOLDOUT_START = 2020-01-01`. 첫 성과 달은
+2020-01 이고 첫 형성일은 그 직전 월말인 2019-12-30 이다(성과 구간을 자르되 형성일은 직전
+리밸런싱부터 — CLAUDE.md 홀드아웃 절).
+
+낙폭은 **월말 기준**이라 일별 낙폭보다 얕게 나온다. 그림 설명에도 적어 두었다.
+
+### 3. 배분 #1 개요·성과 — `allocation/cycle_switch_report.py`
 
 경기 사이클 스위치 전략의 개요와 성과 분석. 스펙은 `docs/allocation/allocation1-overview.md`.
 
@@ -80,7 +108,7 @@ venv/bin/python analysis/allocation/cycle_switch_report.py --from 1999-12-31 --c
 따로 계산하지 않으므로 표와 그림이 어긋나지 않는다. HTML 생성만 `cycle_switch_html.py`
 로 나눠 뒀다.
 
-### 3. 사내 제안서 — `algorithm1/build_proposal.py`
+### 4. 사내 제안서 — `algorithm1/build_proposal.py`
 
 A4 인쇄를 전제로 한 알고리즘 제안서. 브라우저 인쇄로 PDF를 뽑는다.
 
@@ -109,7 +137,7 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 로직 노출 수준은 "기법명까지만"이다. 임계치·기간·순위 규칙은 쓰지 않는다 —
 `docs/algorithm-specs/00-작성규칙.md` 와 `00-변환가이드.md` 를 먼저 읽을 것.
 
-### 4. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
+### 5. 워크포워드 결과 — `algorithm1/build_wf_viz.py`
 
 실험 22(워크포워드) · 23(손절 8% 검토) 결과 시각화.
 
@@ -131,11 +159,12 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
 
 ## HTML 없이 콘솔·JSON만
 
-보고서로 바로 쓰지는 않고, 위 3종의 재료가 되거나 그때그때 확인용으로 돌린 것들이다.
+보고서로 바로 쓰지는 않고, 위 리포트들의 재료가 되거나 그때그때 확인용으로 돌린 것들이다.
 
 | 스크립트 | 산출 | 용도 |
 |---|---|---|
 | `algorithm1/mtd_performance.py` | 콘솔 | 월중 성과 숫자만. `mtd_viz.py` 의 계산 원천 |
+| `algorithm1/monthly_perf.py` | `monthly_perf.json` | 월별 성과 계산·캐시. `monthly_viz.py` 의 원천 |
 | `allocation/cycle_switch.py --backtest` | 콘솔 | 배분 #1 성과 요약 |
 | `algorithm1/walkforward.py` | `walkforward.json` | 시간분할 재추정 (실험 22) |
 | `algorithm1/stoploss_8_vs_10.py` | `stop8v10.json` | 손절 8% vs 10% (실험 23, 기각) |
@@ -154,6 +183,34 @@ venv/bin/python analysis/algorithm1/build_proposal.py   # 그다음 (HTML)
    HTML을 손볼 때마다 백테스트를 다시 돌리지 않아도 되고, 수치를 손으로 옮기다 틀리는 일도
    없어진다. 짧은 것은 `mtd_viz.py` 처럼 한 파일에 둬도 된다.
 2. **산출 경로는 `ALGO_OUT` 규약을 따른다** (위 공통 사항의 3줄을 그대로 복사).
-3. **JSON을 만드는 쪽도 반드시 리포에 넣는다.** 위 4번이 그래서 막혔다.
+3. **JSON을 만드는 쪽도 반드시 리포에 넣는다.** 위 5번이 그래서 막혔다.
 4. HTML을 아티팩트로 게시하면 링크로 공유·재열람이 된다. 스크립트를 다시 돌리면 파일이
    갱신되므로, 같은 파일 경로로 다시 게시하면 같은 링크가 유지된다.
+
+---
+
+## 웹앱에서 열기 — `/algo`
+
+리포트는 `reference/analysis/` 에 떨어지고 gitignore 대상이라 다른 PC로 넘어가지 않는다.
+같은 PC에서라면 **웹앱의 알고리즘 대시보드(`/algo`)에서 버튼으로 연다.**
+
+백엔드 `GET /reports` 가 목록을, `GET /reports/{key}` 가 파일을 내려준다. 등록은
+`backend/app/api/routes/reports.py` 의 `REPORTS` 리스트 한 곳이다 — 새 리포트를 만들면
+여기에 한 줄 추가한다.
+
+| key | 파일 | 스크립트 |
+|---|---|---|
+| `mtd` | `mtd_viz.html` | `algorithm1/mtd_viz.py` |
+| `monthly` | `monthly_viz.html` | `algorithm1/monthly_viz.py` |
+| `walkforward` | `wf_viz.html` | `algorithm1/build_wf_viz.py` |
+| `proposal` | `proposal.html` | `algorithm1/build_proposal.py` |
+| `cycle_switch` | `cycle_switch.html` | `allocation/cycle_switch_report.py` |
+
+**디렉터리를 통째로 정적 마운트하지 않는다** — 같은 폴더에 중간 산출 JSON 이 함께 있고,
+나중에 무엇이 더 떨어질지 모른다. 등록된 키만 내려주고 경로는 코드에서 만든다.
+
+파일이 아직 없으면 목록에 `exists: false` 로 남고 화면에는 생성 명령이 함께 뜬다 —
+**목록에서 지워 버리면 "그런 리포트가 있다"는 사실까지 사라지기 때문이다.**
+
+생성은 이 API 가 하지 않는다. 화면에 뜨는 시각은 **파일이 만들어진 시각**이라, 오래된
+리포트를 최신인 줄 알고 보는 일이 없게 했다.

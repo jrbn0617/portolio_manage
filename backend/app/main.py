@@ -13,6 +13,7 @@ from app.api.routes import (
     macro,
     monthly_fundamentals,
     prices,
+    reports,
     uploads,
 )
 from app.core.config import settings
@@ -39,6 +40,7 @@ app.include_router(batches.router)
 app.include_router(data_sources.router)
 app.include_router(funds.router)
 app.include_router(bbg_indices.router)
+app.include_router(reports.router)
 
 
 @app.get("/health")

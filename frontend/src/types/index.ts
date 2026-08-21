@@ -269,3 +269,16 @@ export interface BbgIndexCreate {
   start_date?: string | null;
   sort_order?: number;
 }
+
+/** 분석 리포트 — 스크립트가 만들어 둔 HTML. 백엔드가 `/reports/{key}` 로 내려준다. */
+export interface Report {
+  key: string;
+  label: string;
+  description: string;
+  track: "algorithm1" | "allocation1" | string;
+  kind: "performance" | "validation" | "document" | string;
+  command: string;
+  exists: boolean;
+  generated_at: string | null;
+  size: number | null;
+}
