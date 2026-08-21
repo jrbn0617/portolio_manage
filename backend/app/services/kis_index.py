@@ -17,12 +17,18 @@ Nexacro 14 앱이라 화면 HTML 에는 값이 없다. 브라우저 통신을 �
 import datetime
 import html
 import re
+import time
 
 import requests
 
 URL = "https://kis-net.kr/indexInfo/realtimeIndexInfoList01.do"
 PAGE = "https://kis-net.kr/kisnet/index.html"
 TIMEOUT = 90
+# 일시적인 연결 실패로 배치가 죽지 않게 몇 번 다시 부른다. 실측 — 2026-08-20 16:10 cron 이
+# `kis-net.kr` DNS 조회 실패로 지수 3종 전부 실패했는데, 같은 환경에서 다시 해 보면
+# 정상이었다(일시적 장애). 이 배치는 매번 전 구간을 다시 받으므로 재시도가 안전하다.
+RETRIES = 3
+BACKOFF_SEC = 6
 
 # 우리 티커 → (KIS 지수코드, 이름, 소스 DB 티커)
 INDICES = {
@@ -76,6 +82,31 @@ _ROW = re.compile(r"<Row>(.*?)</Row>", re.S)
 _COL = re.compile(r'<Col id="\w+">([^<]*)</Col>')
 
 
+def _post(body: str) -> requests.Response:
+    """일시적 실패만 다시 시도한다 — 연결·타임아웃·5xx.
+
+    **4xx 나 파싱 실패는 다시 부르지 않는다.** 요청 형식이 틀렸거나 사이트가 바뀐
+    것이라, 다시 불러도 같은 답이 오고 원인만 늦게 드러난다.
+    """
+    last = None
+    for i in range(RETRIES):
+        try:
+            r = requests.post(URL, data=body.encode("utf-8"), headers=_HEADERS, timeout=TIMEOUT)
+            r.raise_for_status()
+            return r
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+            last = exc
+        except requests.exceptions.HTTPError as exc:
+            if exc.response is None or exc.response.status_code < 500:
+                raise
+            last = exc
+        if i < RETRIES - 1:
+            wait = BACKOFF_SEC * (i + 1)
+            print(f"    (연결 실패 — {wait}초 후 재시도 {i + 2}/{RETRIES}) {last}", flush=True)
+            time.sleep(wait)
+    raise last
+
+
 def fetch_index(ticker: str, start: datetime.date | None = None,
                 end: datetime.date | None = None) -> list[tuple]:
     """일별 [(date, 총수익지수, 순가격지수 or None)]. 오래된 날짜부터 정렬해 돌려준다.
@@ -93,8 +124,7 @@ def fetch_index(ticker: str, start: datetime.date | None = None,
     end = end or datetime.date.today()
 
     body = _BODY.format(code=code, start=start.strftime("%Y%m%d"), end=end.strftime("%Y%m%d"))
-    r = requests.post(URL, data=body.encode("utf-8"), headers=_HEADERS, timeout=TIMEOUT)
-    r.raise_for_status()
+    r = _post(body)
     r.encoding = "utf-8"
 
     m = _DATASET.search(r.text)
