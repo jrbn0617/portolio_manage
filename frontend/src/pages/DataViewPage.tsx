@@ -121,13 +121,13 @@ export default function DataViewPage() {
                   tickFormatter={(v) => v.toLocaleString()}
                 />
                 <Tooltip />
-                <Line yAxisId="left" type="monotone" dataKey="close" name="종가" stroke="#2563eb" dot={false} />
+                <Line yAxisId="left" type="monotone" dataKey="close" name="종가" stroke="var(--c-accent-2)" dot={false} />
                 <Line
                   yAxisId="left"
                   type="monotone"
                   dataKey="high"
                   name="고가"
-                  stroke="#16a34a"
+                  stroke="var(--c-ok-2)"
                   dot={false}
                   strokeDasharray="3 3"
                 />
@@ -136,7 +136,7 @@ export default function DataViewPage() {
                   type="monotone"
                   dataKey="low"
                   name="저가"
-                  stroke="#dc2626"
+                  stroke="var(--c-bad-2)"
                   dot={false}
                   strokeDasharray="3 3"
                 />
@@ -145,7 +145,7 @@ export default function DataViewPage() {
                   type="monotone"
                   dataKey="adj_close"
                   name="수정종가 지수(최초일=100)"
-                  stroke="#9333ea"
+                  stroke="var(--c-chart-2)"
                   dot={false}
                 />
               </LineChart>
@@ -156,7 +156,7 @@ export default function DataViewPage() {
                 <XAxis dataKey="date" hide />
                 <YAxis width={90} tickFormatter={(v) => v.toLocaleString()} />
                 <Tooltip />
-                <Bar dataKey="volume" name="거래량" fill="#94a3b8" />
+                <Bar dataKey="volume" name="거래량" fill="var(--c-muted)" />
               </BarChart>
             </ResponsiveContainer>
 
@@ -167,7 +167,7 @@ export default function DataViewPage() {
             <div style={{ maxHeight: 320, overflowY: "auto", marginTop: 8 }}>
               <table border={1} cellPadding={6} style={{ borderCollapse: "collapse", width: "100%" }}>
                 <thead>
-                  <tr style={{ position: "sticky", top: 0, background: "#fff" }}>
+                  <tr style={{ position: "sticky", top: 0, background: "var(--c-card)" }}>
                     <th>date</th>
                     <th>open</th>
                     <th>high</th>
@@ -236,7 +236,7 @@ export default function DataViewPage() {
               <XAxis dataKey="date" />
               <YAxis domain={["auto", "auto"]} />
               <Tooltip />
-              <Line type="monotone" dataKey="value" stroke="#16a34a" dot={false} />
+              <Line type="monotone" dataKey="value" stroke="var(--c-ok-2)" dot={false} />
             </LineChart>
           </ResponsiveContainer>
         )}

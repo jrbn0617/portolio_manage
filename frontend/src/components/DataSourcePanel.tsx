@@ -5,10 +5,10 @@ import { SOURCE_COLOR } from "../lib/sources";
 
 /** 상태 배지 — 지연이 먼저다. 수집 예정은 경고가 아니라 안내다. */
 function statusOf(d: DataSource): { text: string; color: string; bg: string } | null {
-  if (d.stale) return { text: d.stale_reason ?? "지연", color: "#b91c1c", bg: "#fee2e2" };
-  if (d.pending) return { text: d.stale_reason ?? "수집 예정", color: "#92400e", bg: "#fef3c7" };
+  if (d.stale) return { text: d.stale_reason ?? "지연", color: "var(--c-bad)", bg: "var(--c-bad-bg)" };
+  if (d.pending) return { text: d.stale_reason ?? "수집 예정", color: "var(--c-warn)", bg: "var(--c-warn-bg)" };
   // 휴장일 실행은 정상이다 — 새 데이터가 없는 게 맞으므로 경고로 칠하지 않는다.
-  if (d.last_run?.status === "holiday") return { text: "직전 휴장일", color: "#57534e", bg: "#f5f5f4" };
+  if (d.last_run?.status === "holiday") return { text: "직전 휴장일", color: "var(--c-holiday-2)", bg: "var(--c-holiday-bg)" };
   return null;
 }
 
@@ -42,7 +42,7 @@ export default function DataSourcePanel() {
           <>
             <span className="ds-origins">
               {origins.map((o) => (
-                <span key={o} style={{ color: SOURCE_COLOR[o] ?? "#374151" }}>
+                <span key={o} style={{ color: SOURCE_COLOR[o] ?? "var(--c-ink-3)" }}>
                   {o}
                 </span>
               ))}
@@ -76,7 +76,7 @@ export default function DataSourcePanel() {
                       {d.label}
                       {d.note && <i className="ds-note" title={d.note}>ⓘ</i>}
                     </td>
-                    <td style={{ color: SOURCE_COLOR[d.source] ?? "#374151", whiteSpace: "nowrap" }}>
+                    <td style={{ color: SOURCE_COLOR[d.source] ?? "var(--c-ink-3)", whiteSpace: "nowrap" }}>
                       {d.source}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>{d.schedule}</td>

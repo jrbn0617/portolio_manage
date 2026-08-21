@@ -80,12 +80,12 @@ export default function IndexMembersPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <span style={{ color: "#666" }}>
+        <span style={{ color: "var(--c-ink-4)" }}>
           {filtered.length} / {constituents.length}종목
         </span>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
 
       {loading ? (
         <p>불러오는 중...</p>
@@ -116,7 +116,7 @@ export default function IndexMembersPage() {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ textAlign: "center", color: "#888" }}>
+                <td colSpan={6} style={{ textAlign: "center", color: "var(--c-muted)" }}>
                   구성종목이 없습니다.
                 </td>
               </tr>

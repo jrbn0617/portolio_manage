@@ -87,7 +87,7 @@ export default function MonthlyFundamentalsPage() {
   return (
     <div>
       <h2>월간 펀더멘털 수동 입력</h2>
-      <p style={{ color: "#666", fontSize: 13 }}>
+      <p style={{ color: "var(--c-ink-4)", fontSize: 13 }}>
         유동비율·상장주식수처럼 월 단위로만 갱신되는 항목을 종목별로 직접 입력합니다. 새 항목명을 입력하면
         자동으로 새로운 지표로 추가됩니다.
       </p>
@@ -132,7 +132,7 @@ export default function MonthlyFundamentalsPage() {
         <button type="submit">저장</button>
       </form>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
         <input
@@ -148,7 +148,7 @@ export default function MonthlyFundamentalsPage() {
             </option>
           ))}
         </select>
-        <span style={{ color: "#666" }}>최근 500건</span>
+        <span style={{ color: "var(--c-ink-4)" }}>최근 500건</span>
       </div>
 
       {loading ? (
@@ -180,7 +180,7 @@ export default function MonthlyFundamentalsPage() {
             ))}
             {entries.length === 0 && (
               <tr>
-                <td colSpan={6} style={{ textAlign: "center", color: "#888" }}>
+                <td colSpan={6} style={{ textAlign: "center", color: "var(--c-muted)" }}>
                   데이터가 없습니다.
                 </td>
               </tr>

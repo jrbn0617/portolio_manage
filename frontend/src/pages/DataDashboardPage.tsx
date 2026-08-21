@@ -103,7 +103,7 @@ export default function DataDashboardPage() {
             {sources.map((s) => (
               <tr key={s.key}>
                 <td>{s.label}</td>
-                <td style={{ color: SOURCE_COLOR[s.source] ?? "#374151" }}>{s.source}</td>
+                <td style={{ color: SOURCE_COLOR[s.source] ?? "var(--c-ink-3)" }}>{s.source}</td>
                 <td className="muted">{s.schedule}</td>
                 <td className="num">{fmtDate(s.last_date)}</td>
                 <td>

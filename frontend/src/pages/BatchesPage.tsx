@@ -100,11 +100,11 @@ export default function BatchesPage() {
                 <tr key={s.job_name}>
                   <td>
                     <strong>{s.job_name}</strong>
-                    <p style={{ color: "#666", margin: "4px 0 0", fontSize: 12.5, lineHeight: 1.5 }}>
+                    <p style={{ color: "var(--c-ink-4)", margin: "4px 0 0", fontSize: 12.5, lineHeight: 1.5 }}>
                       {s.description}
                     </p>
                   </td>
-                  <td style={{ color: SOURCE_COLOR[s.source] ?? "#374151", whiteSpace: "nowrap" }}>
+                  <td style={{ color: SOURCE_COLOR[s.source] ?? "var(--c-ink-3)", whiteSpace: "nowrap" }}>
                     {s.source}
                   </td>
                   <td style={{ whiteSpace: "nowrap" }}>
@@ -112,7 +112,7 @@ export default function BatchesPage() {
                     {s.cron && (
                       <>
                         <br />
-                        <code style={{ color: "#94a3b8", fontSize: 11 }}>{s.cron}</code>
+                        <code style={{ color: "var(--c-muted)", fontSize: 11 }}>{s.cron}</code>
                       </>
                     )}
                   </td>
@@ -123,12 +123,12 @@ export default function BatchesPage() {
                           {STATUS_LABEL[last.status] ?? last.status}
                         </span>
                         <br />
-                        <span style={{ color: "#94a3b8", fontSize: 11 }}>
+                        <span style={{ color: "var(--c-muted)", fontSize: 11 }}>
                           {new Date(last.started_at).toLocaleString("ko-KR")}
                         </span>
                       </>
                     ) : (
-                      <span style={{ color: "#aaa" }}>이력 없음</span>
+                      <span style={{ color: "var(--c-muted)" }}>이력 없음</span>
                     )}
                   </td>
                   <td style={{ textAlign: "center" }}>
@@ -141,7 +141,7 @@ export default function BatchesPage() {
                         {running ? "실행 중..." : triggeringJob === s.job_name ? "요청 중..." : "지금 실행"}
                       </button>
                     ) : (
-                      <span style={{ color: "#aaa", fontSize: 12 }}>화면에서 업로드</span>
+                      <span style={{ color: "var(--c-muted)", fontSize: 12 }}>화면에서 업로드</span>
                     )}
                   </td>
                 </tr>
@@ -149,7 +149,7 @@ export default function BatchesPage() {
             })}
           </tbody>
         </table>
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
+        {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
       </section>
 
       <section>
@@ -188,10 +188,10 @@ export default function BatchesPage() {
                   </tr>
                   {expandedId === r.id && (
                     <tr>
-                      <td colSpan={7} style={{ background: "#fafafa" }}>
+                      <td colSpan={7} style={{ background: "var(--c-card-2)" }}>
                         {r.error && (
                           <div style={{ marginBottom: 8 }}>
-                            <strong style={{ color: "#c62828" }}>에러</strong>
+                            <strong style={{ color: "var(--c-bad-2)" }}>에러</strong>
                             <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>{r.error}</pre>
                           </div>
                         )}
@@ -217,7 +217,7 @@ export default function BatchesPage() {
               ))}
               {runs.length === 0 && (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", color: "#888" }}>
+                  <td colSpan={7} style={{ textAlign: "center", color: "var(--c-muted)" }}>
                     실행 이력이 없습니다.
                   </td>
                 </tr>

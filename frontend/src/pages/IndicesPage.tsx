@@ -13,7 +13,7 @@ const MODE_DESC: Record<string, string> = {
 };
 
 const cell: React.CSSProperties = { padding: "7px 9px", verticalAlign: "top" };
-const th: React.CSSProperties = { ...cell, textAlign: "left", fontWeight: 600, color: "#475569" };
+const th: React.CSSProperties = { ...cell, textAlign: "left", fontWeight: 600, color: "var(--c-ink-3)" };
 
 function daysAgo(iso: string | null): number | null {
   if (!iso) return null;
@@ -117,16 +117,16 @@ export default function IndicesPage() {
     <div>
       <h2>지수관리</h2>
 
-      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13, color: "#374151",
-                    background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 6,
+      <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13, color: "var(--c-ink-3)",
+                    background: "var(--c-card-2)", border: "1px solid var(--c-rule)", borderRadius: 6,
                     padding: "10px 14px", marginBottom: 14, alignItems: "center" }}>
         <span>수집 대상 <b>{enabled.length}</b> / {rows.length}</span>
         <span>당일치 <b>{enabled.filter((r) => r.refresh_mode === "daily").length}</b></span>
         <span>전 구간 <b>{enabled.filter((r) => r.refresh_mode === "full").length}</b></span>
         {stale.length > 0 && (
-          <span style={{ color: "#b45309" }}>최근 5일 내 데이터 없음 <b>{stale.length}</b></span>
+          <span style={{ color: "var(--c-warn-2)" }}>최근 5일 내 데이터 없음 <b>{stale.length}</b></span>
         )}
-        <span style={{ marginLeft: "auto", color: "#94a3b8" }}>
+        <span style={{ marginLeft: "auto", color: "var(--c-muted)" }}>
           블룸버그 터미널 SSH · 평일 18:30
         </span>
         <button onClick={runBatch} disabled={running}>
@@ -134,16 +134,16 @@ export default function IndicesPage() {
         </button>
       </div>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
 
       {loading ? <p>불러오는 중...</p> : (
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5,
-                        border: "1px solid #e2e8f0" }}>
-          <thead style={{ background: "#f8fafc" }}>
+                        border: "1px solid var(--c-rule)" }}>
+          <thead style={{ background: "var(--c-card-2)" }}>
             <tr>
               <th style={{ ...th, width: 34 }} title="수집 대상에서 빼려면 체크 해제">수집</th>
               <th style={th}>블룸버그 티커</th>
-              <th style={th}>설명 <span style={{ fontWeight: 400, color: "#94a3b8" }}>(클릭해 수정)</span></th>
+              <th style={th}>설명 <span style={{ fontWeight: 400, color: "var(--c-muted)" }}>(클릭해 수정)</span></th>
               <th style={th}>요청 방식</th>
               <th style={{ ...th, textAlign: "right" }}>최근값</th>
               <th style={th}>적재 구간</th>
@@ -155,7 +155,7 @@ export default function IndicesPage() {
               const d = daysAgo(r.last_dt);
               const isStale = r.enabled && (d === null || d > 5);
               return (
-                <tr key={r.ticker} style={{ borderTop: "1px solid #f1f5f9",
+                <tr key={r.ticker} style={{ borderTop: "1px solid var(--c-rule-2)",
                                             opacity: r.enabled ? 1 : 0.5 }}>
                   <td style={{ ...cell, textAlign: "center" }}>
                     <input type="checkbox" checked={r.enabled}
@@ -164,9 +164,9 @@ export default function IndicesPage() {
                   </td>
                   <td style={cell}>
                     <div style={{ fontFamily: "ui-monospace, monospace" }}>{r.bbg_ticker}</div>
-                    <div style={{ color: "#94a3b8", fontSize: 11, marginTop: 2 }}>
+                    <div style={{ color: "var(--c-muted)", fontSize: 11, marginTop: 2 }}>
                       → {r.ticker}
-                      {r.compute_tr && <span style={{ color: "#0f766e" }}> · TR 직접계산</span>}
+                      {r.compute_tr && <span style={{ color: "var(--c-src-dg)" }}> · TR 직접계산</span>}
                     </div>
                   </td>
                   <td style={{ ...cell, minWidth: 260 }}>
@@ -194,7 +194,7 @@ export default function IndicesPage() {
                     ) : (
                       <div onClick={() => startEdit(r, "note")}
                            style={{ cursor: "text", fontSize: 11, marginTop: 2,
-                                    color: r.note ? "#64748b" : "#cbd5e1" }}>
+                                    color: r.note ? "var(--c-ink-4)" : "var(--c-muted)" }}>
                         {r.note || "메모 추가"}
                       </div>
                     )}
@@ -211,19 +211,19 @@ export default function IndicesPage() {
                     </select>
                   </td>
                   <td style={{ ...cell, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
-                    {r.last_value === null ? <span style={{ color: "#cbd5e1" }}>-</span>
+                    {r.last_value === null ? <span style={{ color: "var(--c-muted)" }}>-</span>
                       : r.last_value.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                   </td>
                   <td style={cell}>
                     {r.rows === 0 ? (
-                      <span style={{ color: "#b45309" }}>없음</span>
+                      <span style={{ color: "var(--c-warn-2)" }}>없음</span>
                     ) : (
                       <>
-                        <div style={{ color: isStale ? "#b45309" : "#334155" }}>
+                        <div style={{ color: isStale ? "var(--c-warn-2)" : "var(--c-ink-2)" }}>
                           {r.first_dt} ~ <b>{r.last_dt}</b>
                           {d !== null && d > 5 && <> ({d}일 전)</>}
                         </div>
-                        <div style={{ color: "#94a3b8", fontSize: 11 }}>
+                        <div style={{ color: "var(--c-muted)", fontSize: 11 }}>
                           {r.rows.toLocaleString()}행
                         </div>
                       </>
@@ -232,7 +232,7 @@ export default function IndicesPage() {
                   <td style={{ ...cell, textAlign: "center" }}>
                     <button onClick={() => remove(r)} title="수집 대상에서 제거 (가격은 유지)"
                             style={{ border: "none", background: "none", cursor: "pointer",
-                                     color: "#cbd5e1" }}>✕</button>
+                                     color: "var(--c-muted)" }}>✕</button>
                   </td>
                 </tr>
               );
@@ -263,7 +263,7 @@ export default function IndicesPage() {
               등록
             </button>
             <button onClick={() => setAdding(false)}>취소</button>
-            <span style={{ color: "#94a3b8", fontSize: 12 }}>
+            <span style={{ color: "var(--c-muted)", fontSize: 12 }}>
               당일치 · PX_LAST 로 등록됩니다
             </span>
           </div>
@@ -272,7 +272,7 @@ export default function IndicesPage() {
         )}
       </div>
 
-      <p style={{ color: "#64748b", fontSize: 12, marginTop: 16, lineHeight: 1.7 }}>
+      <p style={{ color: "var(--c-ink-4)", fontSize: 12, marginTop: 16, lineHeight: 1.7 }}>
         <b>당일치</b> — {MODE_DESC.daily}<br />
         <b>전 구간</b> — {MODE_DESC.full}<br />
         블룸버그 시계열은 구간을 넓혀도 요청 1회라, 당일치라고 해서 하루만 좁혀 부르지 않고

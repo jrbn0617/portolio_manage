@@ -113,7 +113,7 @@ export default function UploadPage() {
             ))}
           </select>
         </label>
-        <p style={{ color: "#666", fontSize: 13 }}>필수 컬럼: {selected.columns}</p>
+        <p style={{ color: "var(--c-ink-4)", fontSize: 13 }}>필수 컬럼: {selected.columns}</p>
       </div>
 
       <input type="file" accept=".csv,.xlsx,.xls" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
@@ -121,10 +121,10 @@ export default function UploadPage() {
         {uploading ? "업로드 중..." : "업로드"}
       </button>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
 
       {result && (
-        <div style={{ marginTop: 16, border: "1px solid #ccc", padding: 12 }}>
+        <div style={{ marginTop: 16, border: "1px solid var(--c-rule-3)", padding: 12 }}>
           <p>
             상태: <strong>{result.status}</strong> / 성공 {result.row_count}건 / 오류{" "}
             {result.error_count}건
@@ -132,7 +132,7 @@ export default function UploadPage() {
           {result.errors.length > 0 && (
             <ul>
               {result.errors.map((e, idx) => (
-                <li key={idx} style={{ color: "crimson" }}>
+                <li key={idx} style={{ color: "var(--c-bad-2)" }}>
                   {e}
                 </li>
               ))}
@@ -144,7 +144,7 @@ export default function UploadPage() {
       <hr style={{ margin: "32px 0" }} />
 
       <h2>월간 펀더멘털 일괄 업로드 (WISEfn 벌크)</h2>
-      <p style={{ color: "#666", fontSize: 13 }}>
+      <p style={{ color: "var(--c-ink-4)", fontSize: 13 }}>
         유동비율/EBITDA(TTM)/EBITDA(Fwd.12M)/EV·EBITDA(Fwd.12M)가 한 파일에 여러 시트로 담긴 WISEfn/DataGuide
         벌크 양식(예: monthly_data_response_*.xlsx)을 그대로 업로드합니다. 시트명 접두어로 항목을 자동 인식하며,
         항목별로 없는 시트는 건너뜁니다.
@@ -152,19 +152,19 @@ export default function UploadPage() {
 
       <div
         style={{
-          border: "1px solid #ddd",
+          border: "1px solid var(--c-rule)",
           borderRadius: 6,
           padding: 12,
           margin: "12px 0 16px",
-          background: "#f8fafc",
+          background: "var(--c-card-2)",
         }}
       >
         <strong style={{ fontSize: 13 }}>1. 요청 양식 받기</strong>
-        <p style={{ color: "#666", fontSize: 12.5, margin: "6px 0 10px", lineHeight: 1.6 }}>
+        <p style={{ color: "var(--c-ink-4)", fontSize: 12.5, margin: "6px 0 10px", lineHeight: 1.6 }}>
           현재 상장 보통주 전체와 월말 거래일이 채워진 빈 양식을 내려받아 DataGuide에 요청하고,
           값이 채워져 돌아온 파일을 아래에 그대로 올리면 됩니다. 시트 구성이 업로드 파서와 맞춰져 있습니다.
         </p>
-        <label style={{ fontSize: 12.5, color: "#374151" }}>
+        <label style={{ fontSize: 12.5, color: "var(--c-ink-3)" }}>
           기준월{" "}
           <input
             type="month"
@@ -176,7 +176,7 @@ export default function UploadPage() {
         <button onClick={handleDownloadTemplate} disabled={templateBusy}>
           {templateBusy ? "생성 중..." : "양식 다운로드"}
         </button>
-        <span style={{ color: "#94a3b8", fontSize: 11.5, marginLeft: 8 }}>
+        <span style={{ color: "var(--c-muted)", fontSize: 11.5, marginLeft: 8 }}>
           미지정 시 당월 기준 최근 6개월
         </span>
       </div>
@@ -193,10 +193,10 @@ export default function UploadPage() {
         </button>
       </div>
 
-      {bulkError && <p style={{ color: "crimson" }}>{bulkError}</p>}
+      {bulkError && <p style={{ color: "var(--c-bad-2)" }}>{bulkError}</p>}
 
       {bulkResult && (
-        <div style={{ marginTop: 16, border: "1px solid #ccc", padding: 12 }}>
+        <div style={{ marginTop: 16, border: "1px solid var(--c-rule-3)", padding: 12 }}>
           <p>
             상태: <strong>{bulkResult.status}</strong> / 총 {bulkResult.total_rows}행 적재
           </p>
@@ -225,7 +225,7 @@ export default function UploadPage() {
           {bulkResult.errors.length > 0 && (
             <ul>
               {bulkResult.errors.map((e, idx) => (
-                <li key={idx} style={{ color: "crimson" }}>
+                <li key={idx} style={{ color: "var(--c-bad-2)" }}>
                   {e}
                 </li>
               ))}

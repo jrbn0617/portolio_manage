@@ -137,7 +137,7 @@ export default function InstrumentsPage({ assetType }: { assetType?: AssetType }
         <button type="submit">추가</button>
       </form>
 
-      {error && <p style={{ color: "crimson" }}>{error}</p>}
+      {error && <p style={{ color: "var(--c-bad-2)" }}>{error}</p>}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
         <input
@@ -169,7 +169,7 @@ export default function InstrumentsPage({ assetType }: { assetType?: AssetType }
             </option>
           ))}
         </select>
-        <span style={{ color: "#666" }}>
+        <span style={{ color: "var(--c-ink-4)" }}>
           {filtered.length} / {instruments.length}개
         </span>
       </div>
