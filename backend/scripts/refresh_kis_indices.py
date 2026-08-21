@@ -47,6 +47,11 @@ from app.services.market_calendar import resolve_batch_status  # noqa: E402
 BATCH_SIZE = 5000
 
 
+# 매일 다시 받는 구간. 연휴로 배치가 며칠 쉬어도 다음 실행이 스스로 메울 만큼 잡는다
+# (설·추석 최장 휴장이 5영업일이라 달력 14일이면 충분하다). 전 구간은 --full.
+LOOKBACK_DAYS = 14
+
+
 def upsert(db, iid: int, rows: list[tuple]) -> None:
     values = [dict(instrument_id=iid, date=d, period="D", close=round(tr, 6),
                    raw_close=None if cp is None else round(cp, 6)) for d, tr, cp in rows]
@@ -57,15 +62,26 @@ def upsert(db, iid: int, rows: list[tuple]) -> None:
             set_={"close": stmt.excluded.close, "raw_close": stmt.excluded.raw_close}))
 
 
-def main(dry_run: bool, only: list[str] | None = None) -> dict:
+def main(dry_run: bool, only: list[str] | None = None, days: int = LOOKBACK_DAYS) -> dict:
+    """days 만큼만 다시 받는다. days=0 이면 전 구간(백필·복구용).
+
+    **매일 전 구간을 받을 이유가 없다.** 새로 생기는 건 하루 1행인데 지수당 2,900행을
+    받아 2,900행을 업서트하고 있었다. 요청 수가 1회로 같다는 이유였는데, 같은 건
+    요청 수뿐이고 응답 크기·파싱·적재는 전부 그만큼 든다.
+
+    구간을 넉넉히 잡는 이유 — 주말·연휴로 배치가 며칠 쉬거나 한 번 실패해도 다음 실행이
+    스스로 메운다. 지수값이 사후 정정되더라도 이 구간 안이면 함께 덮어쓴다.
+    """
     db = SessionLocal()
     summary, failed = {}, []
+    start = None if days <= 0 else datetime.date.today() - datetime.timedelta(days=days)
+    print(f"조회 구간: {'전 구간' if start is None else f'{start} ~ 오늘 ({days}일)'}")
     try:
         for ticker, (code, name, _) in INDICES.items():
             if only and ticker not in only:
                 continue
             try:
-                rows = fetch_index(ticker)
+                rows = fetch_index(ticker, start=start)
             except Exception as exc:  # noqa: BLE001
                 # 지수마다 별개 요청이라 하나의 실패가 나머지를 막지 않는다.
                 print(f"  {ticker:<8} 실패 — {exc}")
@@ -114,7 +130,7 @@ class _Tee:
             s.flush()
 
 
-def run(trigger="manual", dry_run=False, only=None) -> str:
+def run(trigger="manual", dry_run=False, only=None, days=LOOKBACK_DAYS) -> str:
     from app.models.batch_run import BatchRun
 
     db = SessionLocal()
@@ -127,7 +143,7 @@ def run(trigger="manual", dry_run=False, only=None) -> str:
     sys.stdout = _Tee(real, buf)
     status = "running"
     try:
-        batch.summary = str(main(dry_run, only))
+        batch.summary = str(main(dry_run, only, days))
         status = "success"
     except Exception as exc:  # noqa: BLE001
         status = "failed"
@@ -148,7 +164,10 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--only", action="append", help="특정 지수만")
+    p.add_argument("--days", type=int, default=LOOKBACK_DAYS,
+                   help=f"최근 며칠을 다시 받을지 (기본 {LOOKBACK_DAYS}일)")
+    p.add_argument("--full", action="store_true", help="전 구간을 다시 받는다 (백필·복구용)")
     p.add_argument("--trigger", default="manual")
     a = p.parse_args()
-    if run(a.trigger, a.dry_run, a.only) == "failed":
+    if run(a.trigger, a.dry_run, a.only, 0 if a.full else a.days) == "failed":
         sys.exit(1)
